@@ -3,6 +3,7 @@ import Dashboard from '../views/Dashboard.vue'
 import History from '../views/History.vue'
 import Settings from '../views/Settings.vue'
 import AlarmLog from '../views/AlarmLog.vue'
+import Weather from '../views/Weather.vue'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import { hasStoredSession } from '../stores/auth'
@@ -15,6 +16,7 @@ const routes = [
   { path: '/history', name: 'History', component: History },
   { path: '/settings', name: 'Settings', component: Settings },
   { path: '/alarm-log', name: 'AlarmLog', component: AlarmLog },
+  { path: '/weather', name: 'Weather', component: Weather },
 ]
 
 const router = createRouter({

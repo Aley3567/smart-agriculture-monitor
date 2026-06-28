@@ -11,6 +11,7 @@ const navItems = [
   { path: '/dashboard', label: '实时监控', icon: 'leaf' },
   { path: '/history', label: '历史数据', icon: 'clock' },
   { path: '/alarm-log', label: '报警日志', icon: 'bell' },
+  { path: '/weather', label: '环境气象', icon: 'weather' },
   { path: '/settings', label: '系统设置', icon: 'sliders' },
 ]
 
@@ -56,6 +57,10 @@ function logout() {
           <svg v-else-if="item.icon === 'bell'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <path d="M6 8.6a4 4 0 0 1 8 0c0 2.9 1.4 3.8 1.4 5H4.6c0-1.2 1.4-2.1 1.4-5z" />
             <path d="M8.2 15.4a2 2 0 0 0 3.6 0" />
+          </svg>
+          <svg v-else-if="item.icon === 'weather'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 16h8a3.5 3.5 0 0 0 .5-7 5 5 0 0 0-9.8 1.2A3 3 0 0 0 6.5 16z" />
+            <path d="M3.5 7.5l-.7-.7M6 5l-.3-1M9.5 3.8V2.8M13 5l.3-1M15.5 7.5l.7-.7" />
           </svg>
           <svg v-else viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 5h4.8M11.5 5H17M3 10h8.5M15 10h2M3 15h2.5M9.2 15H17" />
