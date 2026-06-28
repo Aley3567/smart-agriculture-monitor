@@ -1,3 +1,15 @@
+import os
+
+try:
+    from pathlib import Path
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except Exception:
+    pass
+
+# 高德 Web 服务 Key:本地放 backend/.env,部署走环境变量,代码中不留明文
+AMAP_WEB_SERVICE_KEY = os.environ.get("AMAP_WEB_SERVICE_KEY", "")
+
 DEFAULT_THRESHOLDS = {
     "temperature": {"min_value": 18.0, "max_value": 35.0},
     "humidity": {"min_value": 30.0, "max_value": 80.0},

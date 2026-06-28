@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -24,11 +24,13 @@ from schemas import (
     ChangePassword,
     UserOut,
     TokenOut,
+    AlarmSummary,
 )
 from config import DEFAULT_THRESHOLDS, DEVICE_COMMAND_MAP
 from ws_manager import manager
 from control import check_and_control
 from auth import hash_password, verify_password, create_access_token, get_current_user
+from weather import router as weather_router
 
 
 @dataclass
@@ -74,6 +76,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(weather_router)
 
 
 async def ingest_sensor_data(data: dict):
@@ -241,6 +245,41 @@ async def get_alarms(
         page=page,
         page_size=page_size,
         items=[AlarmLogOut.model_validate(i) for i in items],
+    )
+
+
+@app.get("/api/alarms/summary", response_model=AlarmSummary)
+async def get_alarms_summary(db: AsyncSession = Depends(get_db)):
+    now = datetime.utcnow()
+    since_24h = now - timedelta(hours=24)
+    today_start = datetime(now.year, now.month, now.day)
+
+    total = (await db.execute(
+        select(func.count()).select_from(AlarmLog)
+    )).scalar()
+    today = (await db.execute(
+        select(func.count()).select_from(AlarmLog).where(AlarmLog.timestamp >= today_start)
+    )).scalar()
+    last_24h = (await db.execute(
+        select(func.count()).select_from(AlarmLog).where(AlarmLog.timestamp >= since_24h)
+    )).scalar()
+
+    param_rows = await db.execute(
+        select(AlarmLog.param_name, func.count()).group_by(AlarmLog.param_name)
+    )
+    by_param = {name: count for name, count in param_rows.all()}
+
+    latest_row = (await db.execute(
+        select(AlarmLog).order_by(AlarmLog.timestamp.desc()).limit(1)
+    )).scalar_one_or_none()
+    latest = AlarmLogOut.model_validate(latest_row) if latest_row else None
+
+    return AlarmSummary(
+        total=total,
+        today=today,
+        last_24h=last_24h,
+        by_param=by_param,
+        latest=latest,
     )
 
 

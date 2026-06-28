@@ -67,6 +67,14 @@ class PaginatedAlarmLog(BaseModel):
     items: list[AlarmLogOut]
 
 
+class AlarmSummary(BaseModel):
+    total: int
+    today: int
+    last_24h: int
+    by_param: dict[str, int]
+    latest: AlarmLogOut | None = None
+
+
 class UserRegister(BaseModel):
     username: str
     password: str
