@@ -1,0 +1,14 @@
+DEFAULT_THRESHOLDS = {
+    "temperature": {"min_value": 18.0, "max_value": 35.0},
+    "humidity": {"min_value": 30.0, "max_value": 80.0},
+    "light": {"min_value": 200.0, "max_value": 2000.0},
+    "soil_moisture": {"min_value": 25.0, "max_value": 75.0},
+}
+
+DEVICE_COMMAND_MAP = {
+    "pump": {"on": "BLEGLED1", "off": "BLEKLED1"},
+    "fertilizer": {"on": "BLEGLED2", "off": "BLEKLED2"},
+    "skylight": {"on": "BLEGLED3", "off": "BLEKLED3"},
+}
+
+DATABASE_URL = "sqlite+aiosqlite:///./agriculture.db"
