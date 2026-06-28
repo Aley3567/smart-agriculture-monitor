@@ -4,34 +4,43 @@ import api from '../utils/api'
 import { useSystemStore } from '../stores/system'
 import { useAuthStore } from '../stores/auth'
 import { showToast } from '../utils/toast'
-import { SETTINGS_FALLBACK } from '../utils/fallbackData'
 
 const systemStore = useSystemStore()
 const authStore = useAuthStore()
 const saving = ref(false)
 
 const thresholds = ref({
-  temperature: { min: 18, max: 32 },
-  humidity: { min: 45, max: 80 },
-  light: { min: 500, max: 1600 },
-  soil_moisture: { min: 35, max: 70 },
+  temperature: { min: 18, max: 35 },
+  humidity: { min: 30, max: 80 },
+  light: { min: 200, max: 2000 },
+  soil_moisture: { min: 25, max: 75 },
 })
 
 const params = [
-  { key: 'temperature', label: '空气温度', desc: '联动通风与遮阳', unit: '°C', floor: -10, ceiling: 50, color: '#df463f' },
-  { key: 'humidity', label: '空气湿度', desc: '联动通风与喷淋', unit: '%', floor: 0, ceiling: 100, color: '#3c98f0' },
-  { key: 'light', label: '光照强度', desc: '联动天窗与补光', unit: 'lux', floor: 0, ceiling: 2000, color: '#fb8b12' },
-  { key: 'soil_moisture', label: '土壤湿度', desc: '联动水泵灌溉', unit: '%', floor: 0, ceiling: 100, color: '#37a85b' },
+  { key: 'temperature', label: '空气温度', desc: '联动灌溉水泵', unit: '°C', floor: -10, ceiling: 50, color: '#df463f' },
+  { key: 'humidity', label: '空气湿度', desc: '联动施肥泵', unit: '%', floor: 0, ceiling: 100, color: '#3c98f0' },
+  { key: 'light', label: '光照强度', desc: '联动天窗', unit: 'lux', floor: 0, ceiling: 2000, color: '#fb8b12' },
+  { key: 'soil_moisture', label: '土壤湿度', desc: '仅记录报警', unit: '%', floor: 0, ceiling: 100, color: '#37a85b' },
 ]
+
+// 设备映射,对应后端 config.py 的 PARAM_DEVICE_MAP + 控制逻辑(value<下限→开,value>上限→关)
+const POLICY_MAP = {
+  temperature: { device: '灌溉水泵', on: '开启水泵', off: '关闭水泵' },
+  humidity: { device: '施肥泵', on: '开启施肥', off: '关闭施肥' },
+  light: { device: '天窗', on: '开启天窗', off: '关闭天窗' },
+}
+
+const configuredCount = computed(() => Object.keys(thresholds.value).length)
+const runningActuators = computed(() => Object.values(systemStore.actuators).filter(Boolean).length)
 
 const statusCards = computed(() => [
   { label: '运行模式', value: systemStore.mode === 'manual' ? '手动控制' : '自动控制', icon: 'shield', tone: 'green' },
   { label: '终端设备', value: systemStore.deviceOnline ? '在线' : '离线', icon: 'device', tone: systemStore.deviceOnline ? 'green' : 'orange' },
-  { label: '有效阈值', value: '4/4', icon: 'link', tone: 'green' },
-  { label: '策略状态', value: '可编辑', icon: 'sliders', tone: 'green' },
+  { label: '有效阈值', value: `${configuredCount.value}/4`, icon: 'link', tone: 'green' },
+  { label: '服务器连接', value: systemStore.wsConnected ? '已连接' : '断开', icon: 'sliders', tone: systemStore.wsConnected ? 'green' : 'orange' },
 ])
 
-const thresholdCards = computed(() => params.map(item => {
+const thresholdCards = computed(() => params.map((item) => {
   const value = thresholds.value[item.key]
   const span = item.ceiling - item.floor || 1
   const left = Math.max(0, Math.min(100, ((value.min - item.floor) / span) * 100))
@@ -39,34 +48,47 @@ const thresholdCards = computed(() => params.map(item => {
   return { ...item, min: value.min, max: value.max, bandLeft: left, bandWidth: Math.max(2, right - left) }
 }))
 
-const policies = SETTINGS_FALLBACK.policies
-const changes = SETTINGS_FALLBACK.changes
+const policies = computed(() => {
+  const out = []
+  params.forEach((p) => {
+    const m = POLICY_MAP[p.key]
+    const th = thresholds.value[p.key]
+    if (m && th) {
+      out.push([`${p.label} < ${th.min}${p.unit}`, m.device, m.on])
+      out.push([`${p.label} > ${th.max}${p.unit}`, m.device, m.off])
+    } else if (th) {
+      out.push([`${p.label} 越界`, '—', '仅记录报警'])
+    }
+  })
+  return out
+})
 
-onMounted(async () => {
+const connectionItems = computed(() => [
+  { label: '服务器连接', value: systemStore.wsConnected ? '已连接' : '断开', warn: !systemStore.wsConnected },
+  { label: '终端设备', value: systemStore.deviceOnline ? '在线' : '离线', warn: !systemStore.deviceOnline },
+  { label: '运行模式', value: systemStore.mode === 'manual' ? '手动' : '自动', warn: false },
+  { label: '执行器运行', value: `${runningActuators.value}/3`, warn: false },
+  { label: '采集周期', value: '2 秒', warn: false },
+])
+
+async function loadStatus() {
   try {
     const [thresholdRes, statusRes] = await Promise.all([
       api.get('/api/thresholds'),
       api.get('/api/status'),
     ])
     if (Array.isArray(thresholdRes.data)) {
-      thresholdRes.data.forEach(item => {
+      thresholdRes.data.forEach((item) => {
         if (thresholds.value[item.param_name]) {
-          thresholds.value[item.param_name] = {
-            min: Number(item.min_value),
-            max: Number(item.max_value),
-          }
+          thresholds.value[item.param_name] = { min: Number(item.min_value), max: Number(item.max_value) }
         }
       })
     }
     systemStore.updateStatus(statusRes.data || {})
-  } catch {
-    systemStore.updateStatus({
-      device_online: false,
-      mode: 'auto',
-      actuators: { pump: true, fertilizer: true, skylight: true },
-    })
-  }
-})
+  } catch { /* 后端不可用时保留系统默认值,不伪造状态 */ }
+}
+
+onMounted(loadStatus)
 
 async function saveThresholds() {
   saving.value = true
@@ -77,16 +99,23 @@ async function saveThresholds() {
       max_value: Number(value.max),
     }))
     await api.put('/api/thresholds', payload)
-    showToast({ title: '保存成功', message: '策略已保存', type: 'success' })
+    showToast({ title: '保存成功', message: '阈值已保存,联动策略已同步更新', type: 'success' })
   } catch {
-    showToast({ title: '本地预览', message: '后端不可用，已保留页面配置', type: 'warn' })
+    showToast({ title: '保存失败', message: '后端不可用,请稍后重试', type: 'warn' })
   } finally {
     saving.value = false
   }
 }
 
-function setMode(mode) {
-  systemStore.setMode(mode)
+async function setMode(mode) {
+  if (systemStore.mode === mode) return
+  try {
+    await api.put('/api/mode', { mode })
+    systemStore.setMode(mode)
+    showToast({ title: '已切换', message: mode === 'auto' ? '自动控制' : '手动控制', type: 'success' })
+  } catch {
+    showToast({ title: '切换失败', message: '后端不可用,请稍后重试', type: 'warn' })
+  }
 }
 
 const oldPassword = ref('')
@@ -104,10 +133,7 @@ async function changePassword() {
   if (newPassword.value !== confirmPassword.value) { pwdError.value = '两次密码不一致'; return }
   pwdSaving.value = true
   try {
-    await authStore.changePassword({
-      oldPassword: oldPassword.value,
-      newPassword: newPassword.value,
-    })
+    await authStore.changePassword({ oldPassword: oldPassword.value, newPassword: newPassword.value })
     pwdSuccess.value = '密码修改成功'
     oldPassword.value = ''
     newPassword.value = ''
@@ -178,24 +204,21 @@ async function changePassword() {
           </div>
         </section>
 
-        <section class="card recent-card">
+        <section class="card policy-card">
           <div class="panel-head">
-            <h2 class="section-title">最近修改</h2>
-            <button class="btn btn-ghost" type="button">查看全部</button>
+            <h2 class="section-title">联动策略</h2>
+            <span class="hint-text">由阈值与设备映射自动生成</span>
           </div>
-          <div class="table-scroll">
-            <table class="data-table">
-              <thead><tr><th>时间</th><th>修改内容</th><th>修改人</th><th>结果</th></tr></thead>
-              <tbody>
-                <tr v-for="row in changes" :key="row[0] + row[1]">
-                  <td>{{ row[0] }}</td>
-                  <td>{{ row[1] }}</td>
-                  <td>{{ row[2] }}</td>
-                  <td>{{ row[3] }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <table class="policy-table">
+            <thead><tr><th>触发条件</th><th>联动设备</th><th>执行动作</th></tr></thead>
+            <tbody>
+              <tr v-for="(row, i) in policies" :key="i">
+                <td>{{ row[0] }}</td>
+                <td>{{ row[1] }}</td>
+                <td>{{ row[2] }}</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
       </main>
 
@@ -217,32 +240,15 @@ async function changePassword() {
         <section class="card connection-card">
           <div class="panel-head">
             <h2 class="section-title">连接状态</h2>
-            <button class="btn btn-ghost" type="button">刷新状态</button>
+            <button class="btn btn-ghost" type="button" @click="loadStatus">刷新状态</button>
           </div>
           <div class="connection-list">
-            <div v-for="item in SETTINGS_FALLBACK.connection" :key="item[0]">
-              <span class="status-dot" :class="{ orange: item[2] === 'orange' }"></span>
-              <span>{{ item[0] }}</span>
-              <strong :class="{ orange: item[2] === 'orange' }">{{ item[1] }}</strong>
+            <div v-for="item in connectionItems" :key="item.label">
+              <span class="status-dot" :class="item.warn ? 'orange' : 'green'"></span>
+              <span>{{ item.label }}</span>
+              <strong :class="{ orange: item.warn }">{{ item.value }}</strong>
             </div>
           </div>
-        </section>
-
-        <section class="card policy-card">
-          <div class="panel-head">
-            <h2 class="section-title">联动策略</h2>
-            <button class="btn btn-soft" type="button">编辑策略</button>
-          </div>
-          <table class="policy-table">
-            <thead><tr><th>触发条件</th><th>联动设备</th><th>执行动作</th></tr></thead>
-            <tbody>
-              <tr v-for="row in policies" :key="row[0] + row[1]">
-                <td>{{ row[0] }}</td>
-                <td>{{ row[1] }}</td>
-                <td>{{ row[2] }}</td>
-              </tr>
-            </tbody>
-          </table>
         </section>
 
         <section class="card pwd-card">
@@ -351,7 +357,6 @@ async function changePassword() {
 }
 
 .threshold-panel,
-.recent-card,
 .mode-card,
 .connection-card,
 .policy-card {
@@ -362,6 +367,11 @@ async function changePassword() {
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 14px;
+}
+
+.hint-text {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .threshold-list {
@@ -457,15 +467,6 @@ async function changePassword() {
   color: var(--text-primary);
 }
 
-.recent-card {
-  padding-top: 8px;
-}
-
-.recent-card .data-table td {
-  height: 24px;
-  font-size: 12px;
-}
-
 .mode-card h2 {
   margin-bottom: 18px;
 }
@@ -483,6 +484,7 @@ async function changePassword() {
   border-radius: 7px;
   background: #fff;
   text-align: left;
+  cursor: pointer;
 }
 
 .mode-option.active {
@@ -495,6 +497,7 @@ async function changePassword() {
   height: 18px;
   border: 1px solid var(--border);
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .mode-option.active > span {
@@ -529,10 +532,6 @@ async function changePassword() {
 
 .connection-list .orange {
   color: var(--orange);
-}
-
-.connection-list .status-dot:not(.orange) {
-  background: #858b92;
 }
 
 .policy-table {

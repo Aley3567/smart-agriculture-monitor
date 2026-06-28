@@ -7,6 +7,16 @@ export const PARAM_LABEL = {
   humi: '湿度',
 }
 
+export const PARAM_UNIT = {
+  temperature: '°C',
+  humidity: '%',
+  light: ' lux',
+  soil_moisture: '%',
+  temp: '°C',
+  humi: '%',
+  soil: '%',
+}
+
 export const ACTION_LABEL = {
   pump_on: '开水泵',
   pump_off: '关水泵',

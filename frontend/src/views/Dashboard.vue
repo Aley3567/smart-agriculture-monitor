@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
@@ -7,37 +8,73 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { CanvasRenderer } from 'echarts/renderers'
 import { useSensorStore } from '../stores/sensor'
 import { useSystemStore } from '../stores/system'
-import { DASHBOARD_FALLBACK } from '../utils/fallbackData'
+import api from '../utils/api'
+import { PARAM_LABEL, PARAM_UNIT } from '../utils/constants'
+import { formatTimeOnly } from '../utils/format'
 
 use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
+const router = useRouter()
 const sensorStore = useSensorStore()
 const systemStore = useSystemStore()
 
-const colors = {
-  temp: '#df463f',
-  humi: '#3c98f0',
-  light: '#fb8b12',
-  soil: '#37a85b',
+const colors = { temp: '#df463f', humi: '#3c98f0', light: '#fb8b12', soil: '#37a85b' }
+
+const KEY_TO_PARAM = { temp: 'temperature', humi: 'humidity', light: 'light', soil: 'soil_moisture' }
+
+const metricDefs = [
+  { key: 'temp', label: '空气温度', icon: 'thermo', unit: '°C', color: colors.temp },
+  { key: 'humi', label: '空气湿度', icon: 'drop', unit: '%', color: colors.humi },
+  { key: 'light', label: '光照强度', icon: 'sun', unit: 'lux', color: colors.light },
+  { key: 'soil', label: '土壤湿度', icon: 'sprout', unit: '%', color: colors.soil },
+]
+
+const thresholds = ref({})
+const todayAlarms = ref(0)
+const recentAlarms = ref([])
+
+const hasData = computed(() => sensorStore.history.timestamps.length > 0)
+
+function fmtVal(key, v) {
+  return key === 'light' ? Math.round(v) : Number(v).toFixed(1)
 }
 
-const realHistoryReady = computed(() => sensorStore.history.timestamps.length > 6)
+function sparkPath(series) {
+  if (!series || series.length < 2) return ''
+  const min = Math.min(...series)
+  const max = Math.max(...series)
+  const range = max - min || 1
+  const stepX = 180 / (series.length - 1)
+  return series.map((v, i) => {
+    const x = (i * stepX).toFixed(1)
+    const y = (47 - ((v - min) / range) * 44).toFixed(1)
+    return `${i === 0 ? 'M' : 'L'}${x} ${y}`
+  }).join(' ')
+}
 
-const metricCards = computed(() => DASHBOARD_FALLBACK.metrics.map(item => {
-  const current = Number(sensorStore.current[item.key])
-  const value = realHistoryReady.value && Number.isFinite(current) && current > 0 ? current : item.value
+const metricCards = computed(() => metricDefs.map((def) => {
+  const cur = Number(sensorStore.current[def.key])
+  const th = thresholds.value[KEY_TO_PARAM[def.key]]
   return {
-    ...item,
-    value: item.key === 'light' ? Math.round(value) : value.toFixed(1),
-    sparkline: DASHBOARD_FALLBACK.sparkline[item.key],
+    ...def,
+    value: hasData.value ? fmtVal(def.key, cur) : '--',
+    min: th ? fmtVal(def.key, th.min_value) : '—',
+    max: th ? fmtVal(def.key, th.max_value) : '—',
+    spark: sensorStore.history[def.key] || [],
+    breach: th && hasData.value ? (cur < th.min_value || cur > th.max_value) : false,
   }
 }))
 
-const chartOption = computed(() => {
-  const useReal = realHistoryReady.value
-  const labels = useReal ? sensorStore.history.timestamps.map(ts => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })) : DASHBOARD_FALLBACK.times
-  const seriesData = key => useReal ? sensorStore.history[key] : DASHBOARD_FALLBACK.chart[key]
+const lastUpdateText = computed(() => {
+  const ts = sensorStore.history.timestamps
+  if (!ts.length) return '等待数据…'
+  return `刷新 ${formatTimeOnly(ts[ts.length - 1])}`
+})
 
+const chartOption = computed(() => {
+  const h = sensorStore.history
+  const labels = h.timestamps.map(ts =>
+    new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }))
   return {
     animation: false,
     color: [colors.temp, colors.humi, colors.light, colors.soil],
@@ -57,44 +94,102 @@ const chartOption = computed(() => {
       textStyle: { color: '#4f565f', fontSize: 12 },
       data: ['空气温度(°C)', '空气湿度(%)', '光照强度(lux)', '土壤湿度(%)'],
     },
-    grid: { top: 76, left: 50, right: 64, bottom: 42 },
+    grid: { top: 76, left: 50, right: 60, bottom: 42 },
     xAxis: {
       type: 'category',
       boundaryGap: false,
       data: labels,
       axisTick: { show: false },
       axisLine: { lineStyle: { color: '#dedbd5' } },
-      axisLabel: { color: '#7d848d', fontSize: 12 },
+      axisLabel: { color: '#7d848d', fontSize: 12, hideOverlap: true },
     },
     yAxis: [
-      {
-        type: 'value',
-        min: 0,
-        max: 40,
-        splitNumber: 4,
-        axisLabel: { color: '#7d848d', fontSize: 12 },
-        splitLine: { lineStyle: { color: '#eeeae4', type: 'dashed' } },
-      },
-      {
-        type: 'value',
-        min: 0,
-        max: 100,
-        splitNumber: 4,
-        axisLabel: { color: '#7d848d', fontSize: 12 },
-        splitLine: { show: false },
-      },
+      { type: 'value', scale: true, axisLabel: { color: '#7d848d', fontSize: 12 }, splitLine: { lineStyle: { color: '#eeeae4', type: 'dashed' } } },
+      { type: 'value', scale: true, position: 'right', axisLabel: { color: '#7d848d', fontSize: 12 }, splitLine: { show: false } },
     ],
     series: [
-      { name: '空气温度(°C)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 0, lineStyle: { width: 2 }, data: seriesData('temp') },
-      { name: '空气湿度(%)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2 }, data: seriesData('humi') },
-      { name: '光照强度(lux)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2 }, data: seriesData('light').map(v => Math.round(v / 20)) },
-      { name: '土壤湿度(%)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2 }, data: seriesData('soil') },
+      { name: '空气温度(°C)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 0, lineStyle: { width: 2 }, data: h.temp },
+      { name: '空气湿度(%)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 0, lineStyle: { width: 2 }, data: h.humi },
+      { name: '光照强度(lux)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2 }, data: h.light },
+      { name: '土壤湿度(%)', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 0, lineStyle: { width: 2 }, data: h.soil },
     ],
   }
 })
 
-const devices = DASHBOARD_FALLBACK.devices
-const alarms = DASHBOARD_FALLBACK.alarms
+const deviceRows = computed(() => [{
+  name: '终端节点-01',
+  type: 'CC2530 终端',
+  params: '温湿度 · 光照 · 土壤',
+  online: systemStore.deviceOnline,
+  last: hasData.value ? formatTimeOnly(sensorStore.history.timestamps.at(-1)) : '—',
+}])
+
+const actuatorDefs = [
+  { key: 'pump', label: '灌溉水泵', icon: '⌁', tone: 'blue' },
+  { key: 'fertilizer', label: '施肥泵', icon: '⌁', tone: 'green' },
+  { key: 'skylight', label: '天窗', icon: '□', tone: 'green' },
+]
+
+function paramLabel(name) {
+  return PARAM_LABEL[name] || name
+}
+
+function unitOf(name) {
+  return PARAM_UNIT[name] || ''
+}
+
+async function fetchStatus() {
+  try {
+    const res = await api.get('/api/status')
+    systemStore.updateStatus(res.data)
+  } catch { /* ignore */ }
+}
+
+async function fetchThresholds() {
+  try {
+    const res = await api.get('/api/thresholds')
+    thresholds.value = Object.fromEntries(
+      res.data.map(t => [t.param_name, { min_value: t.min_value, max_value: t.max_value }]),
+    )
+  } catch { /* ignore */ }
+}
+
+async function fetchSummary() {
+  try {
+    const res = await api.get('/api/alarms/summary')
+    todayAlarms.value = res.data.today
+  } catch { /* ignore */ }
+}
+
+async function fetchRecentAlarms() {
+  const end = new Date()
+  const start = new Date(end.getTime() - 7 * 24 * 3600 * 1000)
+  try {
+    const res = await api.get('/api/alarms', {
+      params: { start: start.toISOString(), end: end.toISOString(), page: 1, page_size: 5 },
+    })
+    recentAlarms.value = res.data.items
+  } catch {
+    recentAlarms.value = []
+  }
+}
+
+async function toggleActuator(device) {
+  const next = systemStore.actuators[device] ? 'off' : 'on'
+  try {
+    await api.post('/api/control', { device, action: next })
+    systemStore.setActuator(device, next === 'on')
+  } catch { /* ignore */ }
+}
+
+function refresh() {
+  fetchStatus()
+  fetchThresholds()
+  fetchSummary()
+  fetchRecentAlarms()
+}
+
+onMounted(refresh)
 </script>
 
 <template>
@@ -102,13 +197,16 @@ const alarms = DASHBOARD_FALLBACK.alarms
     <header class="topbar">
       <h1 class="page-title">环境监测</h1>
       <div class="top-actions">
-        <button class="select-like" type="button">温室A-1号 <span>⌄</span></button>
-        <span class="online-pill"><span class="status-dot green"></span>在线</span>
-        <span class="refresh-text">刷新 {{ DASHBOARD_FALLBACK.refreshTime }}</span>
-        <button class="icon-btn" title="刷新" type="button">
+        <span class="greenhouse-name">智慧温室</span>
+        <span class="online-pill" :class="{ offline: !systemStore.deviceOnline }">
+          <span class="status-dot" :class="systemStore.deviceOnline ? 'green' : 'gray'"></span>
+          {{ systemStore.deviceOnline ? '在线' : '离线' }}
+        </span>
+        <span class="refresh-text">{{ lastUpdateText }}</span>
+        <button class="icon-btn" title="刷新" type="button" @click="refresh">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16.2 10a6.2 6.2 0 1 1-1.8-4.4"/><path d="M16.2 4v4h-4"/></svg>
         </button>
-        <button class="icon-btn" title="设置" type="button">
+        <button class="icon-btn" title="设置" type="button" @click="router.push('/settings')">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.6"/><path d="M16 10a6.2 6.2 0 0 0-.1-.9l1.5-1.2-1.7-3-1.9.7a6.7 6.7 0 0 0-1.6-.9L12 2.7H8l-.3 2a6.7 6.7 0 0 0-1.6.9l-1.9-.7-1.7 3 1.5 1.2a6.2 6.2 0 0 0 0 1.8l-1.5 1.2 1.7 3 1.9-.7a6.7 6.7 0 0 0 1.6.9l.3 2h4l.3-2a6.7 6.7 0 0 0 1.6-.9l1.9.7 1.7-3-1.5-1.2c.1-.3.1-.6.1-.9z"/></svg>
         </button>
       </div>
@@ -125,13 +223,13 @@ const alarms = DASHBOARD_FALLBACK.alarms
           </span>
           <strong>{{ metric.label }}</strong>
         </div>
-        <div class="metric-value"><span>{{ metric.value }}</span><small>{{ metric.unit }}</small></div>
+        <div class="metric-value" :class="{ breach: metric.breach }"><span>{{ metric.value }}</span><small>{{ metric.unit }}</small></div>
         <svg class="sparkline" viewBox="0 0 180 54" preserveAspectRatio="none">
-          <path :d="`M0 ${metric.sparkline[0]} ${metric.sparkline.map((v, i) => `L${i * 15} ${v}`).join(' ')}`" fill="none" :stroke="metric.color" stroke-width="2" />
+          <path :d="sparkPath(metric.spark)" fill="none" :stroke="metric.color" stroke-width="2" />
         </svg>
         <div class="metric-minmax">
-          <span>最低 {{ metric.min }}</span>
-          <span>最高 {{ metric.max }}</span>
+          <span>下限 {{ metric.min }}</span>
+          <span>上限 {{ metric.max }}</span>
         </div>
       </article>
     </section>
@@ -141,15 +239,7 @@ const alarms = DASHBOARD_FALLBACK.alarms
         <section class="card trend-card">
           <div class="panel-head">
             <h2 class="section-title">实时趋势</h2>
-            <div class="range-tabs">
-              <button class="active" type="button">1小时</button>
-              <button type="button">6小时</button>
-              <button type="button">24小时</button>
-              <button type="button">7天</button>
-              <button class="calendar" type="button">
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4.5" width="12" height="12" rx="2"/><path d="M7 2.8v3.5M13 2.8v3.5M4 8h12"/></svg>
-              </button>
-            </div>
+            <span class="chart-hint">实时 · 最近 {{ sensorStore.history.timestamps.length }} 点</span>
           </div>
           <v-chart :option="chartOption" autoresize class="trend-chart" />
         </section>
@@ -161,21 +251,19 @@ const alarms = DASHBOARD_FALLBACK.alarms
               <thead>
                 <tr>
                   <th>设备名称</th>
-                  <th>设备类型</th>
-                  <th>位置</th>
+                  <th>类型</th>
+                  <th>采集参数</th>
                   <th>连接状态</th>
                   <th>最后上报</th>
-                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in devices" :key="row[0]">
-                  <td>{{ row[0] }}</td>
-                  <td>{{ row[1] }}</td>
-                  <td>{{ row[2] }}</td>
-                  <td><span class="status-dot green"></span> {{ row[3] }}</td>
-                  <td>{{ row[4] }}</td>
-                  <td><a>详情</a></td>
+                <tr v-for="row in deviceRows" :key="row.name">
+                  <td>{{ row.name }}</td>
+                  <td>{{ row.type }}</td>
+                  <td>{{ row.params }}</td>
+                  <td><span class="status-dot" :class="row.online ? 'green' : 'gray'"></span> {{ row.online ? '在线' : '离线' }}</td>
+                  <td>{{ row.last }}</td>
                 </tr>
               </tbody>
             </table>
@@ -187,42 +275,48 @@ const alarms = DASHBOARD_FALLBACK.alarms
         <section class="card side-card">
           <h2 class="section-title">运行状态</h2>
           <div class="state-list">
-            <div><span class="side-icon green">▣</span><span>服务器连接</span><strong>正常</strong></div>
-            <div><span class="side-icon green">▢</span><span>终端设备</span><strong>{{ DASHBOARD_FALLBACK.terminalStatus }}</strong></div>
-            <div><span class="side-icon orange">▣</span><span>告警状态</span><strong class="danger">2 条告警</strong></div>
+            <div>
+              <span class="side-icon" :class="systemStore.wsConnected ? 'green' : 'orange'">▣</span>
+              <span>服务器连接</span>
+              <strong :class="{ danger: !systemStore.wsConnected }">{{ systemStore.wsConnected ? '正常' : '断开' }}</strong>
+            </div>
+            <div>
+              <span class="side-icon" :class="systemStore.deviceOnline ? 'green' : 'orange'">▢</span>
+              <span>终端设备</span>
+              <strong :class="{ danger: !systemStore.deviceOnline }">{{ systemStore.deviceOnline ? '在线' : '离线' }}</strong>
+            </div>
+            <div>
+              <span class="side-icon" :class="todayAlarms > 0 ? 'orange' : 'green'">▣</span>
+              <span>今日告警</span>
+              <strong :class="{ danger: todayAlarms > 0 }">{{ todayAlarms }} 条</strong>
+            </div>
           </div>
         </section>
 
         <section class="card side-card alarm-card">
           <h2 class="section-title">告警摘要</h2>
-          <div v-for="alarm in alarms" :key="alarm.title" class="alarm-item">
-            <span class="alarm-mark" :class="alarm.tone">!</span>
+          <p v-if="!recentAlarms.length" class="empty-hint">近 7 天暂无告警</p>
+          <div v-for="alarm in recentAlarms" :key="alarm.id" class="alarm-item">
+            <span class="alarm-mark" :class="alarm.value < alarm.threshold ? 'orange' : 'red'">!</span>
             <div>
-              <strong>{{ alarm.title }}</strong>
-              <small>{{ alarm.place }}</small>
+              <strong>{{ paramLabel(alarm.param_name) }}{{ alarm.value < alarm.threshold ? '偏低' : '偏高' }}</strong>
+              <small>{{ alarm.value }}{{ unitOf(alarm.param_name) }} · 阈值 {{ alarm.threshold }}{{ unitOf(alarm.param_name) }}</small>
             </div>
-            <time>{{ alarm.time }}</time>
+            <time>{{ formatTimeOnly(alarm.timestamp) }}</time>
           </div>
-          <button class="view-all" type="button">查看全部</button>
+          <button class="view-all" type="button" @click="router.push('/alarms')">查看全部</button>
         </section>
 
         <section class="card side-card">
           <h2 class="section-title">执行器控制</h2>
           <div class="actuator-list">
-            <div>
-              <span class="act-icon blue">⌁</span>
-              <div><strong>灌溉系统</strong><small>自动 | 今日已灌溉 1 次</small></div>
-              <button class="toggle active" type="button"></button>
-            </div>
-            <div>
-              <span class="act-icon green">⌁</span>
-              <div><strong>施肥系统</strong><small>自动 | 今日已施肥 0 次</small></div>
-              <button class="toggle active" type="button"></button>
-            </div>
-            <div>
-              <span class="act-icon green">□</span>
-              <div><strong>天窗通风</strong><small>自动 | 当前开度 30%</small></div>
-              <button class="toggle active" type="button"></button>
+            <div v-for="act in actuatorDefs" :key="act.key">
+              <span class="act-icon" :class="act.tone">{{ act.icon }}</span>
+              <div>
+                <strong>{{ act.label }}</strong>
+                <small>{{ systemStore.mode === 'auto' ? '自动' : '手动' }} · {{ systemStore.actuators[act.key] ? '运行中' : '已停止' }}</small>
+              </div>
+              <button class="toggle" :class="{ active: systemStore.actuators[act.key] }" type="button" @click="toggleActuator(act.key)"></button>
             </div>
           </div>
         </section>
@@ -241,7 +335,6 @@ const alarms = DASHBOARD_FALLBACK.alarms
 .top-actions,
 .metric-head,
 .panel-head,
-.range-tabs,
 .state-list div,
 .alarm-item,
 .actuator-list > div {
@@ -261,6 +354,11 @@ const alarms = DASHBOARD_FALLBACK.alarms
   justify-content: flex-end;
 }
 
+.greenhouse-name {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
 .online-pill {
   height: 32px;
   display: inline-flex;
@@ -274,8 +372,20 @@ const alarms = DASHBOARD_FALLBACK.alarms
   font-weight: 650;
 }
 
+.online-pill.offline {
+  border-color: #ecd8d5;
+  background: #fbf3f2;
+  color: #b9543f;
+}
+
+.status-dot.gray {
+  background: #b8b8b8;
+}
+
 .refresh-text {
   color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .metric-row {
@@ -332,6 +442,10 @@ const alarms = DASHBOARD_FALLBACK.alarms
   font-weight: 650;
 }
 
+.metric-value.breach span {
+  color: var(--red);
+}
+
 .sparkline {
   width: 100%;
   height: 48px;
@@ -370,37 +484,10 @@ const alarms = DASHBOARD_FALLBACK.alarms
   margin-bottom: 8px;
 }
 
-.range-tabs {
-  height: 36px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-  overflow: hidden;
-}
-
-.range-tabs button {
-  min-width: 64px;
-  height: 34px;
-  border: 0;
-  border-right: 1px solid var(--border-light);
-  background: #fff;
-  color: #4d545d;
-  font-size: 13px;
-}
-
-.range-tabs button.active {
-  background: #eef8f1;
-  color: #1f6d39;
-  font-weight: 700;
-}
-
-.range-tabs .calendar {
-  min-width: 38px;
-  border-right: 0;
-}
-
-.range-tabs svg {
-  width: 16px;
-  height: 16px;
+.chart-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font-mono);
 }
 
 .trend-chart {
@@ -409,16 +496,11 @@ const alarms = DASHBOARD_FALLBACK.alarms
 }
 
 .device-card {
-  min-height: 236px;
+  min-height: 160px;
 }
 
 .device-card h2 {
   margin-bottom: 14px;
-}
-
-.device-card a {
-  color: #1d703b;
-  font-weight: 700;
 }
 
 .right-stack {
@@ -464,6 +546,12 @@ const alarms = DASHBOARD_FALLBACK.alarms
   min-height: 202px;
 }
 
+.empty-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 8px 0 14px;
+}
+
 .alarm-item {
   gap: 10px;
   padding: 4px 0 14px;
@@ -484,6 +572,7 @@ const alarms = DASHBOARD_FALLBACK.alarms
   color: #fff;
   font-weight: 800;
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .alarm-mark.red { background: var(--red); }
@@ -492,6 +581,7 @@ const alarms = DASHBOARD_FALLBACK.alarms
 .alarm-item div {
   display: grid;
   gap: 2px;
+  min-width: 0;
 }
 
 .alarm-item small {
@@ -501,6 +591,9 @@ const alarms = DASHBOARD_FALLBACK.alarms
 .alarm-item time {
   margin-left: auto;
   color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .view-all {
@@ -511,6 +604,7 @@ const alarms = DASHBOARD_FALLBACK.alarms
   border-top: 1px solid var(--border-light);
   background: #fff;
   color: var(--text-secondary);
+  cursor: pointer;
 }
 
 .actuator-list {
@@ -548,6 +642,7 @@ const alarms = DASHBOARD_FALLBACK.alarms
 
 .actuator-list .toggle {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 @media (max-width: 1100px) {
@@ -585,11 +680,6 @@ const alarms = DASHBOARD_FALLBACK.alarms
 
   .trend-chart {
     height: 300px;
-  }
-
-  .range-tabs {
-    width: 100%;
-    overflow-x: auto;
   }
 }
 </style>

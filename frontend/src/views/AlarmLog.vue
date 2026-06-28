@@ -1,80 +1,159 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { usePaginatedFetch } from '../composables/usePaginatedFetch'
-import { ALARM_FALLBACK } from '../utils/fallbackData'
+import api from '../utils/api'
+import { PARAM_LABEL, PARAM_UNIT, ACTION_LABEL } from '../utils/constants'
+import { formatDateTime } from '../utils/format'
 
 const { dateRange, tableData, total, currentPage, pageSize, fetch: fetchAlarms, handlePageChange } =
   usePaginatedFetch('/api/alarms')
 
-const displayRows = computed(() => tableData.value.length ? tableData.value.map((row, index) => ({
-  id: row.id || index,
-  time: row.timestamp || row.time,
-  param: row.param_name || row.param || '空气温度',
-  value: row.value || row.trigger_value || ALARM_FALLBACK.selected.value,
-  threshold: row.threshold || ALARM_FALLBACK.selected.threshold,
-  level: row.level || (index === 0 ? '高危' : index > 5 ? '低危' : '中危'),
-  status: row.status || (index % 3 === 0 ? '待复核' : '已处理'),
-  person: row.person || '-',
-  action: '查看',
-  hot: index === 0,
-})) : ALARM_FALLBACK.rows)
+const summary = ref({ total: 0, today: 0, last_24h: 0, by_param: {}, latest: null })
+const paramFilter = ref('')
+const rangeKey = ref('7d')
+const selectedId = ref(null)
 
-const summary = ALARM_FALLBACK.summary
+const RANGE_PRESETS = {
+  '24h': { label: '近 24 小时', ms: 24 * 3600 * 1000 },
+  '7d': { label: '近 7 天', ms: 7 * 24 * 3600 * 1000 },
+  '30d': { label: '近 30 天', ms: 30 * 24 * 3600 * 1000 },
+}
 
-const selected = computed(() => displayRows.value[0])
+function unitOf(param) {
+  return PARAM_UNIT[param] || ''
+}
 
-onMounted(() => {
-  dateRange.value = [new Date('2026-06-27T00:00:00'), new Date('2026-06-27T23:59:00')]
-  fetchAlarms()
+function directionOf(row) {
+  return row.value < row.threshold ? 'low' : 'high'
+}
+
+const rows = computed(() => tableData.value
+  .filter(r => !paramFilter.value || r.param_name === paramFilter.value)
+  .map(r => ({
+    id: r.id,
+    time: formatDateTime(r.timestamp),
+    param: PARAM_LABEL[r.param_name] || r.param_name,
+    paramRaw: r.param_name,
+    value: `${r.value}${unitOf(r.param_name)}`,
+    threshold: `${r.value < r.threshold ? '<' : '>'} ${r.threshold}${unitOf(r.param_name)}`,
+    action: ACTION_LABEL[r.action] || r.action,
+    raw: r,
+  })))
+
+const selected = computed(() => {
+  const list = rows.value
+  if (!list.length) return null
+  return list.find(r => r.id === selectedId.value) || list[0]
 })
 
-function levelClass(level) {
-  if (level === '高危') return 'danger'
-  if (level === '中危') return 'warn'
-  return 'info'
+const rangeText = computed(() => {
+  if (!dateRange.value || dateRange.value.length < 2) return ''
+  return `${formatDateTime(dateRange.value[0])} ~ ${formatDateTime(dateRange.value[1])}`
+})
+
+const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize.value)))
+
+const paramDist = computed(() => Object.entries(summary.value.by_param || {})
+  .map(([k, v]) => ({ label: PARAM_LABEL[k] || k, count: v }))
+  .sort((a, b) => b.count - a.count))
+
+const adviceMap = {
+  temperature: ['核对温室通风与天窗开度', '高温启动降温、低温注意保温', '关注作物耐受温度区间'],
+  humidity: ['检查通风与施肥联动是否生效', '湿度过高警惕病害,过低及时补水', '核对湿度传感器是否结露'],
+  light: ['强光放下遮阳,弱光开启补光/天窗', '核对光照传感器是否被遮挡', '结合作物需光特性调节'],
+  soil_moisture: ['土壤过干及时灌溉,过湿暂停供水', '检查滴灌管路与水泵状态', '按土壤墒情设定灌溉阈值'],
+}
+const advice = computed(() => {
+  const p = selected.value?.paramRaw
+  return adviceMap[p] || ['核对对应传感器读数是否正常', '检查相关执行器联动是否生效', '持续关注该参数变化趋势']
+})
+
+function applyRange(key) {
+  rangeKey.value = key
+  const end = new Date()
+  const start = new Date(end.getTime() - RANGE_PRESETS[key].ms)
+  dateRange.value = [start, end]
+  fetchAlarms()
 }
 
-function statusClass(status) {
-  return status === '已处理' ? 'success' : 'danger'
+async function fetchSummary() {
+  try {
+    const res = await api.get('/api/alarms/summary')
+    summary.value = res.data
+  } catch { /* 保持上一次数据 */ }
 }
+
+function refresh() {
+  fetchAlarms()
+  fetchSummary()
+}
+
+function selectRow(id) {
+  selectedId.value = id
+}
+
+onMounted(() => {
+  applyRange('7d')
+  fetchSummary()
+})
 </script>
 
 <template>
   <div class="alarm-page">
     <header class="topbar">
       <h1 class="page-title">报警日志</h1>
-      <button class="btn btn-primary" type="button" @click="fetchAlarms">刷新日志</button>
+      <button class="btn btn-primary" type="button" @click="refresh">刷新日志</button>
     </header>
 
     <div class="alarm-grid">
       <main class="left-stack">
         <section class="summary-row">
-          <article v-for="item in summary" :key="item.label" class="card summary-card">
-            <span>{{ item.label }}</span>
-            <div><strong :class="item.tone">{{ item.value }}</strong><small v-if="item.sub">{{ item.sub }}</small></div>
+          <article class="card summary-card">
+            <span>今日报警</span>
+            <div><strong class="red">{{ summary.today }}</strong></div>
+          </article>
+          <article class="card summary-card">
+            <span>近 24 小时</span>
+            <div><strong class="orange">{{ summary.last_24h }}</strong></div>
+          </article>
+          <article class="card summary-card">
+            <span>累计报警</span>
+            <div><strong class="blue">{{ summary.total }}</strong></div>
+          </article>
+          <article class="card summary-card">
+            <span>最常触发</span>
+            <div>
+              <strong class="green param-strong">{{ paramDist[0]?.label || '—' }}</strong>
+              <small v-if="paramDist[0]">{{ paramDist[0].count }} 次</small>
+            </div>
           </article>
         </section>
 
         <section class="card filter-card">
           <div class="filter-group wide">
             <label>时间范围</label>
-            <div class="date-field">
-              <span>{{ ALARM_FALLBACK.filterRange.start }}</span>
-              <span>→</span>
-              <span>{{ ALARM_FALLBACK.filterRange.end }}</span>
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4.5" width="12" height="12" rx="2"/><path d="M7 2.8v3.5M13 2.8v3.5M4 8h12"/></svg>
+            <div class="range-tabs">
+              <button
+                v-for="(preset, key) in RANGE_PRESETS"
+                :key="key"
+                type="button"
+                :class="{ active: rangeKey === key }"
+                @click="applyRange(key)"
+              >{{ preset.label }}</button>
             </div>
+            <small class="range-text">{{ rangeText }}</small>
           </div>
           <div class="filter-group">
             <label>参数类型</label>
-            <button class="select-like" type="button">全部 <span>⌄</span></button>
+            <select v-model="paramFilter" class="select-real">
+              <option value="">全部</option>
+              <option value="temperature">温度</option>
+              <option value="humidity">湿度</option>
+              <option value="light">光照</option>
+              <option value="soil_moisture">土壤湿度</option>
+            </select>
           </div>
-          <div class="filter-group">
-            <label>处理状态</label>
-            <button class="select-like" type="button">全部 <span>⌄</span></button>
-          </div>
-          <button class="btn btn-soft query-btn" type="button">查询</button>
-          <button class="btn btn-ghost" type="button">重置</button>
+          <button class="btn btn-soft query-btn" type="button" @click="refresh">刷新</button>
         </section>
 
         <section class="card event-card">
@@ -87,39 +166,34 @@ function statusClass(status) {
                 <th>参数类型</th>
                 <th class="col-number">触发值</th>
                 <th class="col-number">阈值</th>
-                <th>严重等级</th>
-                <th>处理状态</th>
-                <th>处理人</th>
-                <th>操作</th>
+                <th>执行动作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in displayRows" :key="row.id" :class="{ hot: row.hot }">
+              <tr v-if="!rows.length">
+                <td colspan="5" class="empty-cell">该时间范围内暂无报警记录</td>
+              </tr>
+              <tr
+                v-for="row in rows"
+                :key="row.id"
+                :class="{ hot: row.id === selected?.id }"
+                @click="selectRow(row.id)"
+              >
                 <td>{{ row.time }}</td>
                 <td>{{ row.param }}</td>
                 <td class="col-number">{{ row.value }}</td>
                 <td class="col-number">{{ row.threshold }}</td>
-                <td><span class="badge" :class="`badge-${levelClass(row.level)}`">{{ row.level }}</span></td>
-                <td><span class="badge" :class="`badge-${statusClass(row.status)}`">{{ row.status }}</span></td>
-                <td>{{ row.person }}</td>
-                <td><a>{{ row.action }}</a></td>
+                <td>{{ row.action }}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <div class="pagination">
-          <span>共 {{ total || 24 }} 条</span>
-          <button type="button" @click="handlePageChange(Math.max(1, currentPage - 1))">‹</button>
-          <button type="button" disabled></button>
-          <button class="active" type="button">1</button>
-          <button type="button" @click="handlePageChange(2)">2</button>
-          <button type="button" @click="handlePageChange(3)">3</button>
-          <button type="button"></button>
-          <button type="button" @click="handlePageChange(currentPage + 1)">›</button>
-          <span>前往</span>
-          <button class="page-input" type="button">{{ pageSize > 0 ? 1 : 1 }}</button>
-          <span>页</span>
+        <div class="pagination" v-if="total > 0">
+          <span>共 {{ total }} 条</span>
+          <button type="button" :disabled="currentPage <= 1" @click="handlePageChange(currentPage - 1)">‹</button>
+          <button class="active" type="button">{{ currentPage }} / {{ totalPages }}</button>
+          <button type="button" :disabled="currentPage >= totalPages" @click="handlePageChange(currentPage + 1)">›</button>
         </div>
         </section>
       </main>
@@ -128,57 +202,47 @@ function statusClass(status) {
         <section class="card detail-card">
           <div class="detail-head">
             <h2 class="section-title">报警详情</h2>
-            <button class="close-btn" type="button">×</button>
           </div>
-          <div class="detail-title">
-            <span class="badge badge-danger">{{ ALARM_FALLBACK.selected.level }}</span>
-            <strong>{{ ALARM_FALLBACK.selected.title }}</strong>
-          </div>
-          <dl>
-            <div><dt>发生时间</dt><dd>{{ ALARM_FALLBACK.selected.occurredAt }}</dd></div>
-            <div><dt>参数类型</dt><dd>{{ ALARM_FALLBACK.selected.param }}</dd></div>
-            <div><dt>触发值</dt><dd>{{ ALARM_FALLBACK.selected.value }}</dd></div>
-            <div><dt>阈值</dt><dd>{{ ALARM_FALLBACK.selected.threshold }}</dd></div>
-            <div><dt>所属设备</dt><dd>{{ ALARM_FALLBACK.selected.device }}</dd></div>
-            <div><dt>位置</dt><dd>{{ ALARM_FALLBACK.selected.position }}</dd></div>
-            <div><dt>处理状态</dt><dd><span class="badge badge-danger">{{ ALARM_FALLBACK.selected.status }}</span></dd></div>
-            <div><dt>处理人</dt><dd>{{ ALARM_FALLBACK.selected.handler }}</dd></div>
-            <div><dt>处理时间</dt><dd>{{ ALARM_FALLBACK.selected.handledAt }}</dd></div>
-            <div><dt>备注</dt><dd>{{ ALARM_FALLBACK.selected.remark }}</dd></div>
-          </dl>
+          <template v-if="selected">
+            <div class="detail-title">
+              <span class="badge" :class="directionOf(selected.raw) === 'low' ? 'badge-info' : 'badge-danger'">
+                {{ directionOf(selected.raw) === 'low' ? '偏低' : '偏高' }}
+              </span>
+              <strong>{{ selected.param }}{{ directionOf(selected.raw) === 'low' ? '低于下限' : '高于上限' }}</strong>
+            </div>
+            <dl>
+              <div><dt>发生时间</dt><dd>{{ selected.time }}</dd></div>
+              <div><dt>参数类型</dt><dd>{{ selected.param }}</dd></div>
+              <div><dt>触发值</dt><dd>{{ selected.value }}</dd></div>
+              <div><dt>阈值</dt><dd>{{ selected.threshold }}</dd></div>
+              <div><dt>执行动作</dt><dd>{{ selected.action }}</dd></div>
+            </dl>
+          </template>
+          <p v-else class="empty-cell">选择左侧记录查看详情</p>
         </section>
 
         <section class="card timeline-card">
-          <h2 class="section-title">自动动作</h2>
-          <div class="timeline">
-            <div v-for="item in ALARM_FALLBACK.timeline" :key="item[0] + item[1]">
-              <time>{{ item[0] }}</time>
-              <span :class="{ red: item[2] === 'red' }"></span>
-              <strong>{{ item[1] }}</strong>
+          <h2 class="section-title">自动响应</h2>
+          <div class="timeline" v-if="selected">
+            <div>
+              <time>{{ selected.time.slice(11) }}</time>
+              <span class="red"></span>
+              <strong>报警触发 · {{ selected.param }}{{ directionOf(selected.raw) === 'low' ? '偏低' : '偏高' }}</strong>
+            </div>
+            <div>
+              <time>—</time>
+              <span></span>
+              <strong>执行动作 · {{ selected.action }}</strong>
             </div>
           </div>
+          <p v-else class="empty-cell">—</p>
         </section>
 
         <section class="card advice-card">
           <h2 class="section-title">处理建议</h2>
           <ul>
-            <li>检查通风系统是否正常运行</li>
-            <li>确认外部遮阳是否开启</li>
-            <li>必要时启动强制降温模式</li>
-            <li>持续监测温度变化趋势</li>
+            <li v-for="(tip, i) in advice" :key="i">{{ tip }}</li>
           </ul>
-        </section>
-
-        <section class="card review-card">
-          <h2 class="section-title">复核记录</h2>
-          <table class="mini-table">
-            <thead><tr><th>时间</th><th>复核人</th><th>处理结果</th><th>备注</th></tr></thead>
-            <tbody><tr><td>-</td><td>-</td><td>-</td><td>-</td></tr></tbody>
-          </table>
-          <div class="review-actions">
-            <button class="btn btn-primary" type="button">标记为已处理</button>
-            <button class="btn btn-ghost" type="button">添加复核记录</button>
-          </div>
         </section>
       </aside>
     </div>
@@ -197,8 +261,7 @@ function statusClass(status) {
 .date-field,
 .detail-head,
 .detail-title,
-.timeline div,
-.review-actions {
+.timeline div {
   display: flex;
   align-items: center;
 }
@@ -210,7 +273,7 @@ function statusClass(status) {
 
 .summary-row {
   display: grid;
-  grid-template-columns: 1.25fr .86fr .86fr .86fr .86fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -233,6 +296,10 @@ function statusClass(status) {
 .summary-card strong {
   font-size: 30px;
   line-height: 1;
+}
+
+.summary-card strong.param-strong {
+  font-size: 20px;
 }
 
 .summary-card small {
@@ -264,29 +331,47 @@ function statusClass(status) {
   flex: 1;
 }
 
-.date-field {
-  height: 36px;
-  min-width: 330px;
-  gap: 20px;
+.range-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.range-tabs button {
+  height: 32px;
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #fff;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
 }
 
-.date-field svg {
-  width: 16px;
-  height: 16px;
-  margin-left: auto;
+.range-tabs button.active {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+.range-text {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.select-real {
+  height: 36px;
+  min-width: 130px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 13px;
 }
 
 .query-btn {
   margin-left: auto;
-  align-self: end;
-  width: 64px;
-}
-
-.filter-card > .btn-ghost {
   align-self: end;
   width: 64px;
 }
@@ -317,15 +402,21 @@ function statusClass(status) {
   height: 51px;
 }
 
+.event-card tbody tr {
+  cursor: pointer;
+}
+
 .event-card tr.hot td {
   background: #fff8f7;
   border-top: 1px solid #f2c7c4;
   border-bottom: 1px solid #f2c7c4;
 }
 
-.event-card a {
-  color: var(--green-deep);
-  font-weight: 700;
+.empty-cell {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 18px 0;
 }
 
 .right-stack {
@@ -353,14 +444,6 @@ function statusClass(status) {
 .detail-head {
   justify-content: space-between;
   margin-bottom: 12px;
-}
-
-.close-btn {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 24px;
-  line-height: 1;
 }
 
 .detail-title {
@@ -398,8 +481,7 @@ function statusClass(status) {
 }
 
 .timeline-card h2,
-.advice-card h2,
-.review-card h2 {
+.advice-card h2 {
   margin-bottom: 10px;
 }
 
@@ -444,37 +526,9 @@ function statusClass(status) {
   font-size: 13px;
 }
 
-.mini-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 14px;
-  font-size: 12px;
-}
-
-.mini-table th,
-.mini-table td {
-  height: 28px;
-  border: 1px solid var(--border-light);
-  text-align: center;
-  color: var(--text-secondary);
-}
-
-.review-actions {
-  gap: 8px;
-}
-
-.review-actions .btn {
-  flex: 1;
-  padding: 0 10px;
-}
-
-.page-input {
-  width: 44px;
-}
-
 @media (max-width: 1120px) {
   .summary-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .alarm-grid {
@@ -493,15 +547,7 @@ function statusClass(status) {
     grid-template-columns: 1fr;
   }
 
-  .date-field {
-    min-width: 0;
-    width: 100%;
-    gap: 8px;
-    font-size: 12px;
-  }
-
-  .query-btn,
-  .filter-card > .btn-ghost {
+  .query-btn {
     align-self: stretch;
     width: 100%;
   }
