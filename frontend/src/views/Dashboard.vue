@@ -1,7 +1,6 @@
 <script setup>
 import { useSensorStore } from '../stores/sensor'
 import { useSystemStore } from '../stores/system'
-import { sendMessage } from '../utils/websocket'
 import GaugeChart from '../components/GaugeChart.vue'
 import TrendChart from '../components/TrendChart.vue'
 import axios from 'axios'
@@ -19,7 +18,6 @@ async function handleActuatorChange(device, val) {
   const action = val ? 'on' : 'off'
   try {
     await axios.post('http://localhost:8000/api/control', { device, action })
-    sendMessage({ type: 'control', device, action })
     systemStore.setActuator(device, val)
   } catch {
     systemStore.setActuator(device, !val)
@@ -107,12 +105,6 @@ async function handleActuatorChange(device, val) {
   display: grid;
   grid-template-columns: 1fr 280px;
   gap: 16px;
-}
-
-.card-title {
-  color: var(--accent);
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .actuator-header {

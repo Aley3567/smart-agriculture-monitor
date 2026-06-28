@@ -123,12 +123,6 @@ async function toggleMode(val) {
   max-width: 700px;
 }
 
-.card-title {
-  color: var(--accent);
-  font-size: 16px;
-  font-weight: 600;
-}
-
 .threshold-row {
   display: flex;
   align-items: center;

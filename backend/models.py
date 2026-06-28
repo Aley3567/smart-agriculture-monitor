@@ -11,10 +11,10 @@ class SensorData(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    temperature: Mapped[float] = mapped_column(Float)
-    humidity: Mapped[float] = mapped_column(Float)
+    temp: Mapped[float] = mapped_column(Float)
+    humi: Mapped[float] = mapped_column(Float)
     light: Mapped[float] = mapped_column(Float)
-    soil_moisture: Mapped[float] = mapped_column(Float)
+    soil: Mapped[float] = mapped_column(Float)
 
 
 class Threshold(Base):

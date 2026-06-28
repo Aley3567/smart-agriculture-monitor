@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -14,10 +13,10 @@ class SensorDataIn(BaseModel):
 class SensorDataOut(BaseModel):
     id: int
     timestamp: datetime
-    temperature: float
-    humidity: float
+    temp: float
+    humi: float
     light: float
-    soil_moisture: float
+    soil: float
 
     model_config = {"from_attributes": True}
 

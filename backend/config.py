@@ -11,4 +11,11 @@ DEVICE_COMMAND_MAP = {
     "skylight": {"on": "BLEGLED3", "off": "BLEKLED3"},
 }
 
+PARAM_DEVICE_MAP = {
+    "temperature": "pump",
+    "humidity": "fertilizer",
+    "light": "skylight",
+    "soil_moisture": None,
+}
+
 DATABASE_URL = "sqlite+aiosqlite:///./agriculture.db"

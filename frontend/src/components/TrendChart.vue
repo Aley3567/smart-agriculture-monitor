@@ -5,6 +5,7 @@ import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { formatTimeOnly } from '../utils/format'
 
 use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
@@ -15,12 +16,6 @@ const props = defineProps({
   lightData: { type: Array, default: () => [] },
   soilData: { type: Array, default: () => [] },
 })
-
-function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
-}
 
 const option = computed(() => ({
   tooltip: {
@@ -42,7 +37,7 @@ const option = computed(() => ({
   },
   xAxis: {
     type: 'category',
-    data: props.timestamps.map(formatTime),
+    data: props.timestamps.map(formatTimeOnly),
     axisLine: { lineStyle: { color: '#2a3a5a' } },
     axisLabel: { color: '#8899aa', fontSize: 10 },
     boundaryGap: false,

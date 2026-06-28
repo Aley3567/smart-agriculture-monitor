@@ -1,20 +1,17 @@
 <script setup>
 import { ref, computed } from 'vue'
-import axios from 'axios'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { formatShortDate } from '../utils/format'
+import { usePaginatedFetch } from '../composables/usePaginatedFetch'
 
 use([LineChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
 
-const dateRange = ref([])
-const tableData = ref([])
-const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(50)
-const loading = ref(false)
+const { dateRange, tableData, total, currentPage, pageSize, loading, fetch: fetchData, handlePageChange } =
+  usePaginatedFetch('http://localhost:8000/api/history')
 const chartData = ref([])
 
 const selectedSeries = ref(['temp', 'humi', 'light', 'soil'])
@@ -32,39 +29,10 @@ const SERIES_CONFIG = {
   soil: { name: '土壤湿度', color: '#67c23a' },
 }
 
-async function fetchData() {
-  if (!dateRange.value || dateRange.value.length < 2) return
-  loading.value = true
-  try {
-    const [start, end] = dateRange.value
-    const res = await axios.get('http://localhost:8000/api/history', {
-      params: {
-        start: start.toISOString(),
-        end: end.toISOString(),
-        page: currentPage.value,
-        page_size: pageSize.value,
-      },
-    })
-    tableData.value = res.data.data
-    total.value = res.data.total
-    chartData.value = res.data.data
-  } catch {
-    tableData.value = []
-    total.value = 0
-  } finally {
-    loading.value = false
-  }
-}
-
-function handlePageChange(page) {
-  currentPage.value = page
-  fetchData()
-}
-
-function formatTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+const _baseFetch = fetchData
+async function fetchDataWithChart() {
+  const result = await _baseFetch()
+  if (result) chartData.value = result.items
 }
 
 const chartOption = computed(() => ({
@@ -82,7 +50,7 @@ const chartOption = computed(() => ({
   grid: { left: 50, right: 20, top: 40, bottom: 30 },
   xAxis: {
     type: 'category',
-    data: chartData.value.map(d => formatTime(d.timestamp)),
+    data: chartData.value.map(d => formatShortDate(d.timestamp)),
     axisLine: { lineStyle: { color: '#2a3a5a' } },
     axisLabel: { color: '#8899aa', fontSize: 10, rotate: 30 },
     boundaryGap: false,
@@ -115,12 +83,12 @@ const chartOption = computed(() => ({
           range-separator="至"
           start-placeholder="开始时间"
           end-placeholder="结束时间"
-          @change="fetchData"
+          @change="fetchDataWithChart"
         />
         <el-checkbox-group v-model="selectedSeries" class="series-check">
           <el-checkbox v-for="s in seriesOptions" :key="s.value" :label="s.value">{{ s.label }}</el-checkbox>
         </el-checkbox-group>
-        <el-button type="primary" @click="fetchData" :loading="loading">查询</el-button>
+        <el-button type="primary" @click="fetchDataWithChart" :loading="loading">查询</el-button>
       </div>
     </el-card>
 
@@ -133,7 +101,7 @@ const chartOption = computed(() => ({
       <template #header><span class="card-title">数据记录</span></template>
       <el-table :data="tableData" v-loading="loading" stripe>
         <el-table-column prop="timestamp" label="时间" width="180">
-          <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
+          <template #default="{ row }">{{ formatShortDate(row.timestamp) }}</template>
         </el-table-column>
         <el-table-column prop="temp" label="温度(°C)" width="120" />
         <el-table-column prop="humi" label="湿度(%)" width="120" />
@@ -174,12 +142,6 @@ const chartOption = computed(() => ({
 
 .series-check .el-checkbox {
   color: var(--text-primary);
-}
-
-.card-title {
-  color: var(--accent);
-  font-size: 16px;
-  font-weight: 600;
 }
 
 .pagination-wrap {

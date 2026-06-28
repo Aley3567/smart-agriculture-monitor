@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -24,11 +25,16 @@ from ws_manager import manager
 from control import check_and_control
 
 
-app_state = {
-    "mode": "auto",
-    "device_online": False,
-    "actuators": {"pump": False, "fertilizer": False, "skylight": False},
-}
+@dataclass
+class SystemState:
+    mode: str = "auto"
+    device_online: bool = False
+    actuators: dict[str, bool] = field(
+        default_factory=lambda: {"pump": False, "fertilizer": False, "skylight": False}
+    )
+
+
+app_state = SystemState()
 
 
 @asynccontextmanager
@@ -64,53 +70,55 @@ app.add_middleware(
 )
 
 
+async def ingest_sensor_data(data: dict):
+    now = datetime.utcnow()
+    async with async_session() as session:
+        session.add(SensorData(
+            timestamp=now,
+            temp=data["temp"],
+            humi=data["humi"],
+            light=data["light"],
+            soil=data["soil"],
+        ))
+        await session.commit()
+
+        await manager.broadcast_to_clients({
+            "type": "sensor_data",
+            "data": {
+                "temp": data["temp"],
+                "humi": data["humi"],
+                "light": data["light"],
+                "soil": data["soil"],
+            },
+            "timestamp": now.isoformat(),
+        })
+
+        await check_and_control(
+            session,
+            temperature=data["temp"],
+            humidity=data["humi"],
+            light=data["light"],
+            soil_moisture=data["soil"],
+            mode=app_state.mode,
+            app_state=app_state,
+        )
+
+
 @app.websocket("/ws/bridge")
 async def ws_bridge(ws: WebSocket):
     await manager.connect_bridge(ws)
-    app_state["device_online"] = True
+    app_state.device_online = True
     await _broadcast_status()
     try:
         while True:
             raw = await ws.receive_json()
             if raw.get("type") == "sensor_data":
-                data = raw["data"]
-                now = datetime.utcnow()
-
-                async with async_session() as session:
-                    record = SensorData(
-                        timestamp=now,
-                        temperature=data["temp"],
-                        humidity=data["humi"],
-                        light=data["light"],
-                        soil_moisture=data["soil"],
-                    )
-                    session.add(record)
-                    await session.commit()
-
-                    await manager.broadcast_to_clients({
-                        "type": "sensor_data",
-                        "data": {
-                            "temperature": data["temp"],
-                            "humidity": data["humi"],
-                            "light": data["light"],
-                            "soil_moisture": data["soil"],
-                        },
-                        "timestamp": now.isoformat(),
-                    })
-
-                    await check_and_control(
-                        session,
-                        temperature=data["temp"],
-                        humidity=data["humi"],
-                        light=data["light"],
-                        soil_moisture=data["soil"],
-                        mode=app_state["mode"],
-                    )
+                await ingest_sensor_data(raw["data"])
     except WebSocketDisconnect:
         pass
     finally:
         manager.disconnect_bridge()
-        app_state["device_online"] = False
+        app_state.device_online = False
         await _broadcast_status()
 
 
@@ -232,7 +240,7 @@ async def get_alarms(
 
 @app.get("/api/status")
 async def get_status():
-    return app_state
+    return asdict(app_state)
 
 
 @app.post("/api/control")
@@ -245,9 +253,9 @@ async def manual_control(req: ControlRequest):
 async def set_mode(req: ModeRequest):
     if req.mode not in ("auto", "manual"):
         return {"error": "mode must be 'auto' or 'manual'"}
-    app_state["mode"] = req.mode
+    app_state.mode = req.mode
     await _broadcast_status()
-    return {"mode": app_state["mode"]}
+    return {"mode": app_state.mode}
 
 
 async def _handle_manual_control(device: str, action: str):
@@ -260,7 +268,7 @@ async def _handle_manual_control(device: str, action: str):
 
     await manager.send_to_bridge({"type": "control", "command": command})
 
-    app_state["actuators"][device] = (action == "on")
+    app_state.actuators[device] = (action == "on")
 
     async with async_session() as session:
         session.add(ControlLog(
@@ -277,7 +285,7 @@ async def _handle_manual_control(device: str, action: str):
 async def _broadcast_status():
     await manager.broadcast_to_clients({
         "type": "status",
-        "device_online": app_state["device_online"],
-        "mode": app_state["mode"],
-        "actuators": app_state["actuators"],
+        "device_online": app_state.device_online,
+        "mode": app_state.mode,
+        "actuators": app_state.actuators,
     })

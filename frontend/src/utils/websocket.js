@@ -1,26 +1,11 @@
 import { useSensorStore } from '../stores/sensor'
 import { useSystemStore } from '../stores/system'
 import { ElNotification } from 'element-plus'
+import { PARAM_LABEL } from './constants'
 
 let ws = null
 let reconnectTimer = null
 const RECONNECT_INTERVAL = 3000
-
-const PARAM_LABEL = {
-  temperature: '温度',
-  humidity: '湿度',
-  light: '光照',
-  soil_moisture: '土壤湿度',
-  temp: '温度',
-  humi: '湿度',
-}
-
-const ACTION_LABEL = {
-  BLEKLED1: '开启报警灯',
-  BLEKLED0: '关闭报警灯',
-  BUZZER1: '开启蜂鸣器',
-  BUZZER0: '关闭蜂鸣器',
-}
 
 export function connectWebSocket() {
   const url = `ws://localhost:8000/ws/data`
