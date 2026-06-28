@@ -1,14 +1,20 @@
 import { useSensorStore } from '../stores/sensor'
 import { useSystemStore } from '../stores/system'
-import { ElNotification } from 'element-plus'
 import { PARAM_LABEL } from './constants'
+import { showToast } from './toast'
 
 let ws = null
 let reconnectTimer = null
+let manualClose = false
 const RECONNECT_INTERVAL = 3000
 
 export function connectWebSocket() {
-  const url = `ws://localhost:8000/ws/data`
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return
+  }
+
+  manualClose = false
+  const url = `${import.meta.env.VITE_WS_BASE}/ws/data`
 
   ws = new WebSocket(url)
 
@@ -30,11 +36,10 @@ export function connectWebSocket() {
       sensorStore.updateSensorData(msg.data, msg.timestamp)
     } else if (msg.type === 'alarm') {
       sensorStore.addAlarm(msg)
-      ElNotification({
+      showToast({
         title: '报警通知',
         message: `${PARAM_LABEL[msg.param] || msg.param} 当前值 ${msg.value}，超过阈值 ${msg.threshold}`,
-        type: 'warning',
-        duration: 5000,
+        type: 'warn',
       })
     } else if (msg.type === 'status') {
       systemStore.updateStatus(msg)
@@ -44,7 +49,10 @@ export function connectWebSocket() {
   ws.onclose = () => {
     const systemStore = useSystemStore()
     systemStore.setWsConnected(false)
-    reconnectTimer = setTimeout(connectWebSocket, RECONNECT_INTERVAL)
+    ws = null
+    if (!manualClose) {
+      reconnectTimer = setTimeout(connectWebSocket, RECONNECT_INTERVAL)
+    }
   }
 
   ws.onerror = () => {
@@ -59,6 +67,7 @@ export function sendMessage(data) {
 }
 
 export function disconnectWebSocket() {
+  manualClose = true
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null

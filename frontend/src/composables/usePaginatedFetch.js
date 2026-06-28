@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import axios from 'axios'
+import api from '../utils/api'
 
 export function usePaginatedFetch(url) {
   const dateRange = ref([])
@@ -14,7 +14,7 @@ export function usePaginatedFetch(url) {
     loading.value = true
     try {
       const [start, end] = dateRange.value
-      const res = await axios.get(url, {
+      const res = await api.get(url, {
         params: {
           start: start.toISOString(),
           end: end.toISOString(),

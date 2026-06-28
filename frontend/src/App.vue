@@ -1,10 +1,27 @@
 <script setup>
 import AppLayout from './components/AppLayout.vue'
-import { onMounted, onUnmounted } from 'vue'
+import { computed, watch, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { connectWebSocket, disconnectWebSocket } from './utils/websocket'
+import { toasts } from './utils/toast'
+import { useAuthStore } from './stores/auth'
 
-onMounted(() => {
-  connectWebSocket()
+const route = useRoute()
+const authStore = useAuthStore()
+const isPublicPage = computed(() => Boolean(route.meta.public))
+
+watch(() => authStore.isAuthenticated, (isAuthenticated) => {
+  if (isAuthenticated) {
+    connectWebSocket()
+  } else {
+    disconnectWebSocket()
+  }
+}, { immediate: true })
+
+watch(isPublicPage, (publicPage) => {
+  if (!publicPage && authStore.isAuthenticated) {
+    connectWebSocket()
+  }
 })
 
 onUnmounted(() => {
@@ -13,5 +30,14 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout />
+  <router-view v-if="isPublicPage" />
+  <AppLayout v-else />
+  <div class="toast-container">
+    <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type">
+      <div>
+        <div class="toast-title">{{ t.title }}</div>
+        <div class="toast-body">{{ t.message }}</div>
+      </div>
+    </div>
+  </div>
 </template>

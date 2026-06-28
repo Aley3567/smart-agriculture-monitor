@@ -17,78 +17,68 @@ const props = defineProps({
   soilData: { type: Array, default: () => [] },
 })
 
+const SERIES = [
+  { key: 'temp', name: '温度', color: '#a63d2f', data: () => props.tempData },
+  { key: 'humi', name: '湿度', color: '#5b7f95', data: () => props.humiData },
+  { key: 'light', name: '光照', color: '#c7853b', data: () => props.lightData },
+  { key: 'soil', name: '土壤湿度', color: '#8b6f47', data: () => props.soilData },
+]
+
 const option = computed(() => ({
   tooltip: {
     trigger: 'axis',
-    backgroundColor: '#1a2a4a',
-    borderColor: '#2a3a5a',
-    textStyle: { color: '#e0e6ed' },
+    backgroundColor: '#fff',
+    borderColor: '#e5e0d8',
+    borderWidth: 1,
+    textStyle: { color: '#2c2c2c', fontSize: 12, fontFamily: 'DM Sans' },
+    extraCssText: 'box-shadow: 0 4px 12px rgba(44,62,45,0.1); border-radius: 8px;',
   },
   legend: {
-    data: ['温度', '湿度', '光照', '土壤湿度'],
-    textStyle: { color: '#8899aa' },
+    data: SERIES.map(s => s.name),
     top: 0,
+    left: 0,
+    textStyle: { color: '#6b6b6b', fontSize: 12, fontFamily: 'DM Sans' },
+    icon: 'roundRect',
+    itemWidth: 12,
+    itemHeight: 3,
+    itemGap: 20,
   },
-  grid: {
-    left: 50,
-    right: 20,
-    top: 40,
-    bottom: 30,
-  },
+  grid: { left: 48, right: 16, top: 36, bottom: 28 },
   xAxis: {
     type: 'category',
     data: props.timestamps.map(formatTimeOnly),
-    axisLine: { lineStyle: { color: '#2a3a5a' } },
-    axisLabel: { color: '#8899aa', fontSize: 10 },
+    axisLine: { lineStyle: { color: '#e5e0d8' } },
+    axisLabel: { color: '#a0a0a0', fontSize: 10, fontFamily: 'JetBrains Mono' },
+    axisTick: { show: false },
     boundaryGap: false,
   },
   yAxis: {
     type: 'value',
-    axisLine: { lineStyle: { color: '#2a3a5a' } },
-    axisLabel: { color: '#8899aa' },
-    splitLine: { lineStyle: { color: '#1a2a4a' } },
+    axisLine: { show: false },
+    axisLabel: { color: '#a0a0a0', fontSize: 10, fontFamily: 'JetBrains Mono' },
+    splitLine: { lineStyle: { color: '#f0ece4', type: 'dashed' } },
   },
-  series: [
-    {
-      name: '温度',
-      type: 'line',
-      data: props.tempData,
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { color: '#f56c6c' },
-      itemStyle: { color: '#f56c6c' },
+  series: SERIES.map(s => ({
+    name: s.name,
+    type: 'line',
+    data: s.data(),
+    smooth: 0.4,
+    showSymbol: false,
+    lineStyle: { color: s.color, width: 2 },
+    itemStyle: { color: s.color },
+    areaStyle: {
+      color: {
+        type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+        colorStops: [
+          { offset: 0, color: s.color + '18' },
+          { offset: 1, color: s.color + '02' },
+        ],
+      },
     },
-    {
-      name: '湿度',
-      type: 'line',
-      data: props.humiData,
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { color: '#409eff' },
-      itemStyle: { color: '#409eff' },
-    },
-    {
-      name: '光照',
-      type: 'line',
-      data: props.lightData,
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { color: '#e6a23c' },
-      itemStyle: { color: '#e6a23c' },
-    },
-    {
-      name: '土壤湿度',
-      type: 'line',
-      data: props.soilData,
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { color: '#67c23a' },
-      itemStyle: { color: '#67c23a' },
-    },
-  ],
+  })),
 }))
 </script>
 
 <template>
-  <v-chart :option="option" autoresize style="width: 100%; height: 300px;" />
+  <v-chart :option="option" autoresize style="width: 100%; height: 280px;" />
 </template>
