@@ -65,3 +65,34 @@ class PaginatedAlarmLog(BaseModel):
     page: int
     page_size: int
     items: list[AlarmLogOut]
+
+
+class UserRegister(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class ChangePassword(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    role: str
+
+    model_config = {"from_attributes": True}
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut

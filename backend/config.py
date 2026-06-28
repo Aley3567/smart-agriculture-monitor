@@ -19,3 +19,7 @@ PARAM_DEVICE_MAP = {
 }
 
 DATABASE_URL = "sqlite+aiosqlite:///./agriculture.db"
+
+SECRET_KEY = "smart-agriculture-secret-change-in-production"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440

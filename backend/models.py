@@ -45,3 +45,14 @@ class ControlLog(Base):
     device: Mapped[str] = mapped_column(Text)
     action: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(Text)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str] = mapped_column(String, default="")
+    role: Mapped[str] = mapped_column(String, default="管理员")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

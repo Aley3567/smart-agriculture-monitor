@@ -1,0 +1,55 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npx vite build
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 119.91.114.175 >> ~/.ssh/known_hosts
+
+      - name: Deploy backend
+        run: |
+          rsync -avz --exclude '__pycache__' --exclude '*.pyc' --exclude 'agriculture.db' \
+            backend/ ubuntu@119.91.114.175:/home/ubuntu/smart-agri/backend/
+
+      - name: Deploy serial bridge
+        run: |
+          rsync -avz --exclude '__pycache__' --exclude '*.pyc' \
+            serial_bridge/ ubuntu@119.91.114.175:/home/ubuntu/smart-agri/serial_bridge/
+
+      - name: Deploy frontend dist
+        run: |
+          rsync -avz frontend/dist/ ubuntu@119.91.114.175:/var/www/smart-agri/
+
+      - name: Install deps & restart service
+        run: |
+          ssh ubuntu@119.91.114.175 bash <<'EOF'
+          set -e
+          cd /home/ubuntu/smart-agri/backend
+          pip3 install -q fastapi uvicorn sqlalchemy aiosqlite pydantic python-jose passlib bcrypt 2>/dev/null || true
+          sudo systemctl restart smart-agri
+          sleep 2
+          systemctl is-active smart-agri && echo "Backend: OK" || echo "Backend: FAILED"
+          sudo nginx -t && sudo systemctl reload nginx
+          echo "Deploy complete"
+          EOF

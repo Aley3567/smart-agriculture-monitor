@@ -3,13 +3,13 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import engine, async_session, Base, get_db
-from models import SensorData, Threshold, AlarmLog, ControlLog
+from models import SensorData, Threshold, AlarmLog, ControlLog, User
 from schemas import (
     ThresholdItem,
     ThresholdOut,
@@ -19,10 +19,16 @@ from schemas import (
     PaginatedAlarmLog,
     SensorDataOut,
     AlarmLogOut,
+    UserRegister,
+    UserLogin,
+    ChangePassword,
+    UserOut,
+    TokenOut,
 )
 from config import DEFAULT_THRESHOLDS, DEVICE_COMMAND_MAP
 from ws_manager import manager
 from control import check_and_control
+from auth import hash_password, verify_password, create_access_token, get_current_user
 
 
 @dataclass
@@ -256,6 +262,51 @@ async def set_mode(req: ModeRequest):
     app_state.mode = req.mode
     await _broadcast_status()
     return {"mode": app_state.mode}
+
+
+@app.post("/api/auth/register", response_model=TokenOut)
+async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == data.username))
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="用户名已存在")
+    user = User(
+        username=data.username,
+        hashed_password=hash_password(data.password),
+        display_name=data.display_name or data.username,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    token = create_access_token(user.id, user.username)
+    return TokenOut(access_token=token, user=UserOut.model_validate(user))
+
+
+@app.post("/api/auth/login", response_model=TokenOut)
+async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == data.username))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(data.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="账号或密码错误")
+    token = create_access_token(user.id, user.username)
+    return TokenOut(access_token=token, user=UserOut.model_validate(user))
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+async def get_me(user: User = Depends(get_current_user)):
+    return UserOut.model_validate(user)
+
+
+@app.put("/api/auth/password")
+async def change_password(
+    data: ChangePassword,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(data.old_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="原密码错误")
+    user.hashed_password = hash_password(data.new_password)
+    await db.commit()
+    return {"message": "密码修改成功"}
 
 
 async def _handle_manual_control(device: str, action: str):
