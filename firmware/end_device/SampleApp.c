@@ -24,8 +24,10 @@
 #include "hal_led.h"
 #include "hal_key.h"
 
-/* OLED 驱动头文件（需项目中提供） */
+/* OLED 驱动头文件（可选：如果项目中没有该文件，在 IAR 预编译宏中不定义 HAL_OLED 即可跳过） */
+#ifdef HAL_OLED
 #include "HalOled.h"
+#endif
 
 #include <string.h>
 #include <stdio.h>
@@ -98,7 +100,9 @@ static void SampleApp_SimulateLight(void);
 static void SampleApp_SimulateSoil(void);
 static uint16 SampleApp_SimpleRand(void);
 
+#ifdef HAL_OLED
 static void SampleApp_UpdateOLED(void);
+#endif
 
 /*********************************************************************
  * @fn      SampleApp_SimpleRand
@@ -306,6 +310,7 @@ static void SampleApp_GPIO_Init(void)
     DHT11_HIGH();      /* 空闲状态为高电平 */
 }
 
+#ifdef HAL_OLED
 /*********************************************************************
  * @fn      SampleApp_UpdateOLED
  * @brief   刷新 OLED 显示内容
@@ -365,6 +370,7 @@ static void SampleApp_UpdateOLED(void)
 
     HalOledShowStr(0, 6, str_buf);
 }
+#endif /* HAL_OLED */
 
 /*********************************************************************
  * @fn      SampleApp_Init
@@ -379,9 +385,11 @@ void SampleApp_Init(uint8 task_id)
     /* 初始化 GPIO（执行器 + DHT11） */
     SampleApp_GPIO_Init();
 
-    /* 初始化 OLED 显示屏 */
+    /* 初始化 OLED 显示屏（可选） */
+#ifdef HAL_OLED
     HalOledInit();
     HalOledClear();
+#endif
 
     /* 配置点播目标地址：协调器 0x0000 */
     SampleApp_DstAddr.addrMode       = (afAddrMode_t)Addr16Bit;
@@ -397,7 +405,9 @@ void SampleApp_Init(uint8 task_id)
     afRegister(&SampleApp_epDesc);
 
     /* 初始显示 */
+#ifdef HAL_OLED
     SampleApp_UpdateOLED();
+#endif
 }
 
 /*********************************************************************
@@ -547,7 +557,9 @@ static void SampleApp_SendPeriodicMessage(void)
                    AF_DEFAULT_RADIUS);
 
     /* ---- 5. 刷新 OLED 显示 ---- */
+#ifdef HAL_OLED
     SampleApp_UpdateOLED();
+#endif
 }
 
 /*********************************************************************
@@ -618,5 +630,7 @@ static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
     }
 
     /* 更新 OLED 显示执行器状态 */
+#ifdef HAL_OLED
     SampleApp_UpdateOLED();
+#endif
 }

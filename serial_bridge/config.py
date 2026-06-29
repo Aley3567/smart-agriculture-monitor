@@ -1,7 +1,7 @@
 import platform
 
 DEFAULT_BAUD = 115200
-DEFAULT_SERVER = "ws://localhost:8000/ws/bridge"
+DEFAULT_SERVER = "ws://119.91.114.175:18082/ws/bridge"
 RECONNECT_INTERVAL = 3
 
 SERIAL_BYTESIZE = 8
