@@ -71,7 +71,7 @@
 
 剩余的是 Z-Stack 工程层面（不在 SampleApp 代码里，yh 在 IAR 操作）：
 
-- [ ] 两个工程编译配置：板1 选 `EndDeviceEB-Pro`，板2 选 `CoordinatorEB-Pro`
+- [ ] 两个工程编译配置：板1 选 `EndDeviceEB`，板2 选 `CoordinatorEB`
 - [ ] **组网参数一致**：两工程 `f8wConfig.cfg` 的 `ZDAPP_CONFIG_PAN_ID` 与 `DEFAULT_CHANLIST`（信道）必须相同；多组同场要错开 PAN ID 避免串数据
 - [ ] 供电/接线：板1（终端）DHT11 已板载，USB 供电即可，UART 口不接 PC；板2（协调器）UART 口接 PC 跑 bridge
 - [ ] OLED 可选：当前 `HAL_OLED` 未定义=禁用；要点亮需配 SPI 驱动（SCK=P1.2/MOSI=P1.3/RES=P1.7/DC=P0.0），不阻塞验收

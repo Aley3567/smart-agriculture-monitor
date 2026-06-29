@@ -25,20 +25,28 @@ firmware/
 
 ### 前置条件
 
-- IAR Embedded Workbench for 8051 (v10.20 或以上)
-- TI Z-Stack 2.5.1a 协议栈 (安装路径通常为 `C:\Texas Instruments\ZStack-CC2530-2.5.1a`)
-- CC Debugger 烧写器
-- 两块 CC2530 开发板
+均可在课程资料 `实验课/5.开发工具/` 里找到安装包：
+
+- **IAR Embedded Workbench for 8051**（资料里是 `1.IAR EW8051 V8.1`，必须是 8051 版，不是 ARM 版）
+- **TI Z-Stack 2.3.0-1.4.0** 协议栈（资料 `ZStack-CC2530-2.3.0-1.4.0协议栈安装文件.rar`，解压后跑 exe，默认装到 `C:\Texas Instruments\`）
+- **SmartRF Flash Programmer** + CC Debugger 烧写器（资料 `SmartRF Flash Programmer 1.9.0.rar`）
+- 两块 CC2530 集成板
+
+> 固件源码注释写的是 Z-Stack 2.5.1a，但 SampleApp 是经典例程，2.3.0-1.4.0 框架一致、可正常编译。
 
 ### 步骤 1: 打开 Z-Stack 工程
 
-Z-Stack 安装目录下找到 SampleApp 工程：
+装好协议栈后，在**安装目录**下找到标准 SampleApp 工程：
 
 ```
-ZStack-CC2530-2.5.1a\Projects\zstack\Samples\SampleApp\CC2530DB\
+C:\Texas Instruments\ZStack-CC2530-2.3.0-1.4.0\Projects\zstack\Samples\SampleApp\CC2530DB\SampleApp.eww
 ```
 
-分别打开 `SampleApp.eww`，IAR 中会看到多个编译配置。
+双击 `SampleApp.eww` 打开（`.eww` = IAR 工作区文件，是双击打开的顶层文件；同目录的 `.ewp` 工程文件、`.ewd` 调试配置会自动跟随，不用单独打开）。打开后左侧 Workspace 栏出现工程树，顶部下拉框可选编译配置。
+
+> ⚠️ **别用课程资料里现成的那个 `SampleApp.eww`**：`14.CC2531...抓包资料/.../Z-Stack透传/Projects/zstack/SE/SampleApp/` 那个是 **Smart Energy 版**，Source 目录里是 ESP/IPD/SimpleMeter 等，**没有我们要替换的 `SampleApp.c`**，会无从下手。必须用协议栈安装后的 **`Samples/SampleApp`** 标准工程。
+
+> ⚠️ **路径坑**：IAR EW8051 对中文、空格路径敏感，容易莫名编译报错。若工程放在中文路径下编不过，先把整个工程目录复制到纯英文短路径（如 `C:\zstack\`）再打开。
 
 ### 步骤 2: 替换源文件
 
@@ -71,7 +79,9 @@ ZStack-CC2530-2.5.1a\Projects\zstack\Samples\SampleApp\CC2530DB\
 | 协调器 | `CoordinatorEB` |
 | 终端节点 | `EndDeviceEB` |
 
-选择方法：IAR 菜单 `Project` → `Edit Configurations` 或工具栏下拉框。
+选择方法：IAR 工具栏下拉框，或菜单 `Project` → `Edit Configurations`。
+
+> 上表是普通 CC2530 的 `CoordinatorEB / EndDeviceEB`。若射频模块带 **CC2591 功放**，改选对应的 `-Pro`（`CoordinatorEB-Pro / EndDeviceEB-Pro`）。**不确定就先用不带 `-Pro` 的**，能组网即可；下拉框实际有哪些以打开的工程为准。
 
 ### 步骤 5: 编译设置
 

@@ -80,8 +80,8 @@ python bridge.py --mock
 # 复制两份 Z-Stack 工程（之前做实验的那个）
 # 分别命名为"协调器"和"终端节点"
 # 用 firmware/ 里的文件替换对应工程的 Source/SampleApp.c 和 SampleApp.h
-# 协调器工程选 CoordinatorEB-Pro 配置，编译
-# 终端节点工程选 EndDeviceEB-Pro 配置，编译
+# 协调器工程选 CoordinatorEB 配置，编译
+# 终端节点工程选 EndDeviceEB 配置，编译
 # 两个都 0 Errors 就准备就绪
 ```
 
@@ -120,10 +120,12 @@ python bridge.py --mock
 
 ### 第 2 步：编译烧写（yh 操作，15 分钟）
 
-- [ ] IAR 打开协调器工程 → `CoordinatorEB-Pro` → F7 编译 → 0 Errors
+> 装 `5.开发工具/1.IAR EW8051 V8.1` + `ZStack-CC2530-2.3.0-1.4.0` 协议栈。工程从哪打开、为什么**别用**资料里现成的 `SampleApp.eww`（那是 Smart Energy 版、没有我们的源码）：见 `firmware/README.md` 步骤1。
+
+- [ ] IAR 打开协调器工程 → `CoordinatorEB` → F7 编译 → 0 Errors
 - [ ] CC Debugger 连协调器板 → Ctrl+D 烧写 → Ctrl+Shift+D 退出
 - [ ] 协调器上电（先不断电）
-- [ ] IAR 打开终端节点工程 → `EndDeviceEB-Pro` → F7 编译 → 0 Errors
+- [ ] IAR 打开终端节点工程 → `EndDeviceEB` → F7 编译 → 0 Errors
 - [ ] CC Debugger 改连终端节点板 → Ctrl+D 烧写 → Ctrl+Shift+D 退出
 
 > 编译报错？看 `docs/hardware-quick-debug.md` 阶段一。
