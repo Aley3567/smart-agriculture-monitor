@@ -78,9 +78,9 @@ static uint16 light_value = 800;  /* 光照强度 (lux) */
 static uint8  soil_value  = 45;   /* 土壤湿度 (%) */
 
 /* 执行器状态：0=关, 1=开 */
-static uint8 pump_state   = 0;    /* 水泵 P1.0 */
-static uint8 fert_state   = 0;    /* 施肥 P1.1 */
-static uint8 window_state = 0;    /* 天窗 P1.6 */
+static uint8 pump_state   = 0;    /* 水泵继电器 P0.6 + 指示灯 P1.0 */
+static uint8 fert_state   = 0;    /* 施肥指示灯 P1.1 */
+static uint8 window_state = 0;    /* 天窗指示灯 P1.6 */
 
 /* 随机种子（用于模拟传感器波动） */
 static uint16 rand_seed = 12345;
@@ -286,23 +286,25 @@ static void SampleApp_SimulateSoil(void)
 /*********************************************************************
  * @fn      SampleApp_GPIO_Init
  * @brief   初始化 GPIO 引脚
- *          P1.0, P1.1, P1.6 → 通用输出（执行器控制）
+ *          P0.6 → 通用输出（继电器控制）
+ *          P1.0, P1.1, P1.6 → 通用输出（板载 LED，低电平亮）
  *          P2.0 → DHT11 数据线（初始设为输出）
  *********************************************************************/
 static void SampleApp_GPIO_Init(void)
 {
-    /* P1.0, P1.1 设置为通用 IO 输出模式 */
-    P1SEL &= ~0x03;   /* P1.0, P1.1 设为通用 IO（清除外设功能） */
-    P1DIR |= 0x03;    /* P1.0, P1.1 设为输出 */
+    /* P0.6 设置为通用 IO 输出模式（继电器） */
+    P0SEL &= ~0x40;   /* P0.6 设为通用 IO */
+    P0DIR |= 0x40;    /* P0.6 设为输出 */
 
-    /* P1.6 设置为通用 IO 输出模式 */
-    P1SEL &= ~0x40;   /* P1.6 设为通用 IO */
-    P1DIR |= 0x40;    /* P1.6 设为输出 */
+    /* P1.0, P1.1, P1.6 设置为通用 IO 输出模式（LED） */
+    P1SEL &= ~0x43;   /* P1.0, P1.1, P1.6 设为通用 IO */
+    P1DIR |= 0x43;    /* P1.0, P1.1, P1.6 设为输出 */
 
     /* 初始状态：全部关闭 */
-    ACTUATOR_PUMP_PIN   = 0;
-    ACTUATOR_FERT_PIN   = 0;
-    ACTUATOR_WINDOW_PIN = 0;
+    ACTUATOR_RELAY_OFF();
+    ACTUATOR_LED_OFF(ACTUATOR_PUMP_LED_PIN);
+    ACTUATOR_LED_OFF(ACTUATOR_FERT_PIN);
+    ACTUATOR_LED_OFF(ACTUATOR_WINDOW_PIN);
 
     /* P2.0 设置为通用 IO（DHT11 数据线） */
     P2SEL &= ~0x01;   /* P2.0 设为通用 IO */
@@ -568,9 +570,10 @@ static void SampleApp_SendPeriodicMessage(void)
  * @param   pckt - 收到的消息包指针
  *
  * 命令格式（字符串匹配）：
- *   BLEGLED1 → P1.0 = 1（开水泵）    BLEKLED1 → P1.0 = 0（关水泵）
- *   BLEGLED2 → P1.1 = 1（开施肥）    BLEKLED2 → P1.1 = 0（关施肥）
- *   BLEGLED3 → P1.6 = 1（开天窗）    BLEKLED3 → P1.6 = 0（关天窗）
+ *   BLEGLED1 → P0.6继电器吸合 + P1.0指示灯亮
+ *   BLEKLED1 → P0.6继电器断开 + P1.0指示灯灭
+ *   BLEGLED2 → P1.1指示灯亮        BLEKLED2 → P1.1指示灯灭
+ *   BLEGLED3 → P1.6指示灯亮        BLEKLED3 → P1.6指示灯灭
  *********************************************************************/
 static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
 {
@@ -593,39 +596,41 @@ static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
         cmd_data[cmd_len] = '\0';
     }
 
-    /* ---- LED1/水泵 (P1.0) ---- */
+    /* ---- 水泵继电器 (P0.6) + LED1 指示 (P1.0) ---- */
     if (strstr((char *)cmd_data, "BLEGLED1") != NULL)
     {
-        ACTUATOR_PUMP_PIN = 1;
+        ACTUATOR_RELAY_ON();
+        ACTUATOR_LED_ON(ACTUATOR_PUMP_LED_PIN);
         pump_state = 1;
     }
     else if (strstr((char *)cmd_data, "BLEKLED1") != NULL)
     {
-        ACTUATOR_PUMP_PIN = 0;
+        ACTUATOR_RELAY_OFF();
+        ACTUATOR_LED_OFF(ACTUATOR_PUMP_LED_PIN);
         pump_state = 0;
     }
 
-    /* ---- LED2/施肥 (P1.1) ---- */
+    /* ---- LED2/施肥 (P1.1，低电平亮) ---- */
     if (strstr((char *)cmd_data, "BLEGLED2") != NULL)
     {
-        ACTUATOR_FERT_PIN = 1;
+        ACTUATOR_LED_ON(ACTUATOR_FERT_PIN);
         fert_state = 1;
     }
     else if (strstr((char *)cmd_data, "BLEKLED2") != NULL)
     {
-        ACTUATOR_FERT_PIN = 0;
+        ACTUATOR_LED_OFF(ACTUATOR_FERT_PIN);
         fert_state = 0;
     }
 
-    /* ---- LED3/天窗 (P1.6) ---- */
+    /* ---- LED3/天窗 (P1.6，低电平亮) ---- */
     if (strstr((char *)cmd_data, "BLEGLED3") != NULL)
     {
-        ACTUATOR_WINDOW_PIN = 1;
+        ACTUATOR_LED_ON(ACTUATOR_WINDOW_PIN);
         window_state = 1;
     }
     else if (strstr((char *)cmd_data, "BLEKLED3") != NULL)
     {
-        ACTUATOR_WINDOW_PIN = 0;
+        ACTUATOR_LED_OFF(ACTUATOR_WINDOW_PIN);
         window_state = 0;
     }
 

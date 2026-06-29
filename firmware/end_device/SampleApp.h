@@ -63,14 +63,20 @@ extern "C" {
 #define DHT11_READ()      (DHT11_PIN)
 
 /*********************************************************************
- * 执行器引脚定义
+ * 创思通信集成板执行器 / 指示灯引脚定义
  *********************************************************************/
-/* P1.0 - LED1/水泵 */
-#define ACTUATOR_PUMP_PIN     P1_0
-/* P1.1 - LED2/施肥 */
-#define ACTUATOR_FERT_PIN     P1_1
-/* P1.6 - LED3/天窗 */
-#define ACTUATOR_WINDOW_PIN   P1_6
+/* P0.6 - 板载继电器，三极管驱动，高电平吸合 */
+#define ACTUATOR_PUMP_PIN         P0_6
+
+/* 三路板载 LED：接到 +3.3V 后由 GPIO 下拉点亮，低电平亮 */
+#define ACTUATOR_PUMP_LED_PIN     P1_0
+#define ACTUATOR_FERT_PIN         P1_1
+#define ACTUATOR_WINDOW_PIN       P1_6
+
+#define ACTUATOR_RELAY_ON()       (ACTUATOR_PUMP_PIN = 1)
+#define ACTUATOR_RELAY_OFF()      (ACTUATOR_PUMP_PIN = 0)
+#define ACTUATOR_LED_ON(pin)      ((pin) = 0)
+#define ACTUATOR_LED_OFF(pin)     ((pin) = 1)
 
 /*********************************************************************
  * 函数声明

@@ -88,14 +88,14 @@ DHT11(P2.0) → 终端节点 SampleApp_SendPeriodicMessage()
 
 | 命令 | backend config.py | 固件终端节点 | 实验 9 原版 | GPIO | 语义 |
 |------|------------------|-------------|-------------|------|------|
-| `BLEGLED1` | pump on | P1_0=1 | P1_0=1 | P1.0 | 开启水泵/LED1 |
-| `BLEKLED1` | pump off | P1_0=0 | P1_0=0 | P1.0 | 关闭水泵/LED1 |
-| `BLEGLED2` | fertilizer on | P1_1=1 | P1_1=1 | P1.1 | 开启施肥/LED2 |
-| `BLEKLED2` | fertilizer off | P1_1=0 | P1_1=0 | P1.1 | 关闭施肥/LED2 |
-| `BLEGLED3` | skylight on | P1_6=1 | P1_6=1 | P1.6 | 开启天窗/LED3 |
-| `BLEKLED3` | skylight off | P1_6=0 | P1_6=0 | P1.6 | 关闭天窗/LED3 |
+| `BLEGLED1` | pump on | P0_6=1, P1_0=0 | P1_0=1 | P0.6 + P1.0 | 继电器吸合，LED1 指示亮 |
+| `BLEKLED1` | pump off | P0_6=0, P1_0=1 | P1_0=0 | P0.6 + P1.0 | 继电器断开，LED1 指示灭 |
+| `BLEGLED2` | fertilizer on | P1_1=0 | P1_1=1 | P1.1 | LED2 指示亮 |
+| `BLEKLED2` | fertilizer off | P1_1=1 | P1_1=0 | P1.1 | LED2 指示灭 |
+| `BLEGLED3` | skylight on | P1_6=0 | P1_6=1 | P1.6 | LED3 指示亮 |
+| `BLEKLED3` | skylight off | P1_6=1 | P1_6=0 | P1.6 | LED3 指示灭 |
 
-**对接状态：三方完全一致。命令字、GPIO、电平含义全部匹配。**
+**对接状态：命令字和上层语义一致；GPIO/电平已按创思通信集成板改为继电器高电平吸合、LED 低电平点亮。**
 
 ### 3.2 命令传输路径
 
@@ -106,7 +106,7 @@ FastAPI control.py → {"type":"control","command":"BLEGLED1"}
   → 协调器 SampleApp_UartCB() 读取串口数据
   → SampleApp_SendToEndDevice() 广播(0xFFFF) via SAMPLEAPP_CTRL_CLUSTERID
   → 终端节点 SampleApp_MessageMSGCB() 收到
-  → strstr 匹配 "BLEGLED1" → P1_0 = 1
+  → strstr 匹配 "BLEGLED1" → P0_6 = 1, P1_0 = 0
 ```
 
 **对接状态：链路完整。**
@@ -146,20 +146,20 @@ FastAPI control.py → {"type":"control","command":"BLEGLED1"}
 
 ## 五、LED/GPIO 硬件映射总表
 
-综合实验 5/6 的 HAL 层定义和实验 9 的直接 GPIO 操作：
+按创思通信集成板原理图：
 
-| 开发板丝印 | GPIO | HAL LED ID | 实验 5/6 用途 | 实验 9 用途 | 项目用途 |
-|-----------|------|------------|--------------|-------------|---------|
-| D1 (Green) | P1.0 | HAL_LED_1 / HAL_LED_4 | 流水灯步骤3 | LED1 控制 | **水泵** |
-| D2 (Red) | P1.1 | HAL_LED_2 | 组播 LED 控制 | LED2 控制 | **施肥** |
-| D3 (Yellow) | P0.4 | HAL_LED_3 | 流水灯步骤2/4 | 不使用 | 不使用 |
-| - | P1.6 | 无 HAL 映射 | 不使用 | LED3 控制 | **天窗** |
+| 原理图器件 | GPIO | 电气极性 | 项目用途 |
+|-----------|------|------------|---------|
+| 继电器 SRA-05VDC-AL | P0.6 | 高电平吸合 | **水泵** |
+| LED D10 | P1.0 | 低电平亮 | **水泵指示** |
+| LED D2 | P1.1 | 低电平亮 | **施肥指示** |
+| LED D11 | P1.6 | 低电平亮 | **天窗指示** |
 
-**关键发现：P1.6 (LED3/天窗) 在 HAL_LED 中没有映射！** 实验 9 通过 `P1DIR |= 0x43` 手动将 P1.0/P1.1/P1.6 设为输出，绕过了 HAL_LED API。项目固件继承了这种直接 GPIO 操作方式。
+**关键发现：P1.0/P1.1/P1.6 三路 LED 的物理连接是上拉到 3.3V 后由 GPIO 下拉点亮，所以固件必须用低电平表示 LED 开。** 继电器是 P0.6 经 S8050 三极管驱动，高电平吸合。
 
 这意味着：
-- 如果开发板上 P1.6 确实连了 LED/继电器，没问题
-- 如果开发板只有 P1.0/P1.1/P0.4 三个板载 LED，则"天窗"需要外接继电器到 P1.6
+- `BLEGLED1` 不能再只写 P1.0；它必须写 P0.6，并可同步 P1.0 做指示灯
+- `BLEGLED2/3` 对 LED 的开/关电平和实验 9 原版相反
 
 ---
 
@@ -170,13 +170,13 @@ FastAPI control.py → {"type":"control","command":"BLEGLED1"}
 - [ ] **烧写项目固件**：使用 `firmware/coordinator/` 和 `firmware/end_device/` 的代码，不要用实验原版代码
 - [ ] **DHT11 接线**：数据线接 P2.0，加 4.7K 上拉电阻到 VCC
 - [ ] **串口接线**：协调器 UART0 (P0.2 RX / P0.3 TX) 接 USB 转串口模块，注意 TX/RX 交叉
-- [ ] **GPIO 方向寄存器**：确认终端节点固件中 P1.0/P1.1/P1.6 已设为输出 (`P1DIR |= 0x43`)
+- [ ] **GPIO 方向寄存器**：确认终端节点固件中 P0.6 已设为输出 (`P0DIR |= 0x40`)，P1.0/P1.1/P1.6 已设为输出 (`P1DIR |= 0x43`)
 - [ ] **先烧协调器再烧终端**：协调器先上电建网
 - [ ] **bridge.py 串口设备名**：macOS 上修改 `--port` 参数为实际 USB 串口设备名（如 `/dev/tty.usbserial-xxxx`）
 
 ### 建议做（提升可靠性）
 
-- [ ] **串口测试**：先用串口助手手动发 `BLEGLED1`，确认终端节点 P1.0 亮灯
+- [ ] **串口测试**：先用串口助手手动发 `BLEGLED1`，确认继电器吸合且 P1.0 指示灯亮
 - [ ] **数据验证**：串口助手查看协调器输出，确认格式为 `t:xx-h:xx-l:xxx-s:xx\r\n`
 - [ ] **P1.6 硬件确认**：确认开发板 P1.6 引脚是否有外接设备，还是需要飞线
 - [ ] **HAL_UART 宏**：协调器工程预编译宏必须包含 `HAL_UART=TRUE` 和 `HAL_UART_DMA=1`
