@@ -31,10 +31,31 @@
 | 串口有数据但全是乱码 | 波特率不对 | 确认串口助手设 **115200**，不是 9600 |
 | 串口完全没数据 | TX/RX 接反或终端节点没入网 | (1) 交换 TX/RX 线 (2) 先上电协调器等 3 秒再上电终端节点 |
 | 数据格式不对，有中文 | 烧的是实验原版固件 | 必须烧 `firmware/` 里的项目固件 |
-| `t:25-h:60` 但没有 `l:` 和 `s:` | 光照/土壤模拟函数被去掉了 | 检查 SampleApp_SimulateLight/Soil 是否存在 |
+| `t:25-h:60` 但没有 `l:` 和 `s:` | 光照 ADC 或土壤模拟路径没有参与组包 | 检查 `SampleApp_ReadLight()`、`SampleApp_SimulateSoil()` 和 `SampleApp_SendPeriodicMessage()` |
 | 发 `BLEGLED1` 但 LED 不亮 | (1) 命令没到终端节点 (2) P1.0 没接 LED | (1) 确认协调器的 UartCB 在工作 (2) 用万用表测 P1.0 电平 |
 
 ## 阶段四：bridge.py
+
+云端辅助调试入口：
+
+- Dashboard 右侧“现场调试”面板会显示最近 bridge 调试事件。
+- API 可直接查：`GET http://119.91.114.175:18082/api/debug-events?board_id=A&limit=20`
+- 关键事件含义：
+
+| 事件 | 说明 | 判断 |
+|------|------|------|
+| `bridge_connected` | 现场电脑的 bridge 已连上腾讯云 | 云端链路 OK |
+| `serial_raw_line` | bridge 从 C 板串口读到了原始行 | C 板 UART 有输出 |
+| `serial_parse_failed` | 串口有数据但不是 `t/h/l/s` 格式 | 可能烧错固件、波特率错或输出格式不对 |
+| `sensor_parsed` | `t/h/l/s` 解析成功并准备上云 | 上行数据格式 OK |
+| `control_received` | bridge 收到云端控制命令 | 云端到现场电脑 OK |
+| `control_written_serial` | bridge 已把控制命令写入串口 | 现场电脑到 C 板 UART 写入 OK |
+
+如果云端只有 `bridge_connected`，没有 `serial_raw_line`，优先查 C 板串口、ED 入网和波特率。
+
+如果有 `serial_raw_line` 但没有 `sensor_parsed`，优先查固件输出格式。
+
+如果有 `control_written_serial` 但板端没反应，优先查 C 板到 ED 的 ZigBee 转发和 ED 命令解析。
 
 | 现象 | 原因 | 解法 |
 |------|------|------|

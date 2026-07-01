@@ -45,8 +45,12 @@ jobs:
         run: |
           ssh ubuntu@119.91.114.175 bash <<'EOF'
           set -e
-          cd /home/ubuntu/smart-agri/backend
-          /home/ubuntu/smart-agri/venv/bin/pip install -q fastapi uvicorn sqlalchemy aiosqlite pydantic 'python-jose[cryptography]' 'passlib[bcrypt]' 'bcrypt<5' 2>/dev/null || true
+          cd /home/ubuntu/smart-agri
+          if [ ! -x /home/ubuntu/smart-agri/venv/bin/python3 ]; then
+            python3 -m venv /home/ubuntu/smart-agri/venv
+          fi
+          /home/ubuntu/smart-agri/venv/bin/python3 -m pip install -q -r /home/ubuntu/smart-agri/backend/requirements.txt
+          /home/ubuntu/smart-agri/venv/bin/python3 -m pip install -q -r /home/ubuntu/smart-agri/serial_bridge/requirements.txt
           sudo systemctl restart smart-agri
           sleep 2
           systemctl is-active smart-agri && echo "Backend: OK" || echo "Backend: FAILED"

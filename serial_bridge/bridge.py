@@ -4,19 +4,37 @@ import json
 import logging
 import sys
 
-import serial
 import websockets
 
-from config import (
-    DEFAULT_BAUD,
-    DEFAULT_PORT,
-    DEFAULT_SERVER,
-    RECONNECT_INTERVAL,
-    SERIAL_BYTESIZE,
-    SERIAL_PARITY,
-    SERIAL_STOPBITS,
-)
-from mock_serial import MockSerial
+try:
+    import serial
+except ModuleNotFoundError:
+    serial = None
+
+try:
+    from .config import (
+        DEFAULT_BAUD,
+        DEFAULT_PORT,
+        DEFAULT_SERVER,
+        RECONNECT_INTERVAL,
+        SERIAL_BYTESIZE,
+        SERIAL_PARITY,
+        SERIAL_STOPBITS,
+    )
+    from .mock_serial import MockSerial
+except ImportError:
+    from config import (
+        DEFAULT_BAUD,
+        DEFAULT_PORT,
+        DEFAULT_SERVER,
+        RECONNECT_INTERVAL,
+        SERIAL_BYTESIZE,
+        SERIAL_PARITY,
+        SERIAL_STOPBITS,
+    )
+    from mock_serial import MockSerial
+
+SerialException = getattr(serial, "SerialException", OSError)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,23 +52,64 @@ FIELD_MAP = {
 
 
 def parse_serial_line(line: str) -> dict | None:
+    payload = parse_serial_payload(line, default_board_id="A", default_board_name="greenhouse-a")
+    return payload["data"] if payload else None
+
+
+def parse_serial_payload(line: str, default_board_id: str, default_board_name: str) -> dict | None:
     try:
         parts = line.strip().split("-")
         data = {}
+        board_id = default_board_id
         for part in parts:
-            key, value = part.split(":")
-            if key in FIELD_MAP:
+            key, value = part.split(":", 1)
+            if key == "id":
+                board_id = value.strip() or default_board_id
+            elif key in FIELD_MAP:
                 data[FIELD_MAP[key]] = float(value)
         if len(data) == 4:
-            return data
+            board_name = default_board_name
+            if board_id != default_board_id:
+                board_name = f"greenhouse-{board_id.lower()}"
+            return {
+                "board_id": board_id,
+                "board_name": board_name,
+                "data": data,
+            }
     except (ValueError, IndexError):
         pass
     return None
 
 
+def build_sensor_message(data: dict, board_id: str, board_name: str) -> dict:
+    return {
+        "type": "sensor_data",
+        "board_id": board_id,
+        "board_name": board_name,
+        "data": data,
+    }
+
+
+def build_debug_message(board_id: str, event: str, level: str = "info", **details) -> dict:
+    return {
+        "type": "bridge_debug",
+        "board_id": board_id,
+        "event": event,
+        "level": level,
+        "details": details,
+    }
+
+
+def should_apply_control(msg: dict, board_id: str) -> bool:
+    target = msg.get("board_id")
+    return msg.get("type") == "control" and (not target or target == board_id)
+
+
 def open_serial(port: str, baud: int, mock: bool):
     if mock:
         return MockSerial(port=port, baudrate=baud)
+    if serial is None:
+        raise RuntimeError("pyserial is required for real serial mode")
     return serial.Serial(
         port=port,
         baudrate=baud,
@@ -61,7 +120,13 @@ def open_serial(port: str, baud: int, mock: bool):
     )
 
 
-async def serial_to_ws(ser, ws_send_queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+async def serial_to_ws(
+    ser,
+    ws_send_queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+    board_id: str,
+    board_name: str,
+):
     while True:
         try:
             raw = await loop.run_in_executor(None, ser.read_until, b"\n")
@@ -70,30 +135,71 @@ async def serial_to_ws(ser, ws_send_queue: asyncio.Queue, loop: asyncio.Abstract
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
-            data = parse_serial_line(line)
-            if data is None:
+            await ws_send_queue.put(json.dumps(build_debug_message(
+                board_id,
+                "serial_raw_line",
+                raw_line=line,
+            )))
+            payload = parse_serial_payload(line, board_id, board_name)
+            if payload is None:
                 logger.warning("failed to parse: %s", line)
+                await ws_send_queue.put(json.dumps(build_debug_message(
+                    board_id,
+                    "serial_parse_failed",
+                    level="warn",
+                    raw_line=line,
+                )))
                 continue
-            msg = json.dumps({"type": "sensor_data", "data": data})
+            data = payload["data"]
+            msg = json.dumps(build_sensor_message(data, payload["board_id"], payload["board_name"]))
             await ws_send_queue.put(msg)
-            logger.info("sensor >> %s", data)
-        except (serial.SerialException, OSError) as e:
+            await ws_send_queue.put(json.dumps(build_debug_message(
+                payload["board_id"],
+                "sensor_parsed",
+                data=data,
+            )))
+            logger.info("sensor >> board=%s %s", payload["board_id"], data)
+        except (SerialException, OSError) as e:
             logger.error("serial read error: %s", e)
             raise
 
 
-async def ws_to_serial(ser, ws_recv_queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+async def ws_to_serial(
+    ser,
+    ws_recv_queue: asyncio.Queue,
+    ws_send_queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+    board_id: str,
+):
     while True:
         raw_msg = await ws_recv_queue.get()
         try:
             msg = json.loads(raw_msg)
-            if msg.get("type") == "control":
+            if should_apply_control(msg, board_id):
                 command = msg["command"]
+                await ws_send_queue.put(json.dumps(build_debug_message(
+                    board_id,
+                    "control_received",
+                    command=command,
+                    target_board_id=msg.get("board_id"),
+                )))
                 cmd_bytes = (command + "\r\n").encode("utf-8")
                 await loop.run_in_executor(None, ser.write, cmd_bytes)
+                await ws_send_queue.put(json.dumps(build_debug_message(
+                    board_id,
+                    "control_written_serial",
+                    command=command,
+                )))
                 logger.info("command >> serial: %s", command)
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("bad ws message: %s (%s)", raw_msg, e)
+            await ws_send_queue.put(json.dumps(build_debug_message(
+                board_id,
+                "ws_message_invalid",
+                level="warn",
+                raw_message=raw_msg,
+                error=str(e),
+            )))
 
 
 async def websocket_sender(ws, ws_send_queue: asyncio.Queue):
@@ -107,7 +213,7 @@ async def websocket_receiver(ws, ws_recv_queue: asyncio.Queue):
         await ws_recv_queue.put(message)
 
 
-async def run_bridge(port: str, baud: int, server: str, mock: bool):
+async def run_bridge(port: str, baud: int, server: str, mock: bool, board_id: str, board_name: str):
     loop = asyncio.get_event_loop()
 
     while True:
@@ -117,7 +223,7 @@ async def run_bridge(port: str, baud: int, server: str, mock: bool):
             ser = open_serial(port, baud, mock)
             logger.info("serial port opened")
             break
-        except (serial.SerialException, OSError) as e:
+        except (SerialException, OSError, RuntimeError) as e:
             logger.error("serial open failed: %s, retrying in %ds", e, RECONNECT_INTERVAL)
             if ser:
                 try:
@@ -132,13 +238,26 @@ async def run_bridge(port: str, baud: int, server: str, mock: bool):
             logger.info("connecting to %s", server)
             ws = await websockets.connect(server)
             logger.info("websocket connected")
+            await ws.send(json.dumps({
+                "type": "bridge_hello",
+                "board_id": board_id,
+                "board_name": board_name,
+            }))
 
             ws_send_queue = asyncio.Queue()
             ws_recv_queue = asyncio.Queue()
+            await ws_send_queue.put(json.dumps(build_debug_message(
+                board_id,
+                "bridge_connected",
+                port=port,
+                baud=baud,
+                mock=mock,
+                server=server,
+            )))
 
             tasks = [
-                asyncio.create_task(serial_to_ws(ser, ws_send_queue, loop)),
-                asyncio.create_task(ws_to_serial(ser, ws_recv_queue, loop)),
+                asyncio.create_task(serial_to_ws(ser, ws_send_queue, loop, board_id, board_name)),
+                asyncio.create_task(ws_to_serial(ser, ws_recv_queue, ws_send_queue, loop, board_id)),
                 asyncio.create_task(websocket_sender(ws, ws_send_queue)),
                 asyncio.create_task(websocket_receiver(ws, ws_recv_queue)),
             ]
@@ -158,7 +277,7 @@ async def run_bridge(port: str, baud: int, server: str, mock: bool):
             OSError,
         ) as e:
             logger.error("websocket error: %s, reconnecting in %ds", e, RECONNECT_INTERVAL)
-        except serial.SerialException as e:
+        except SerialException as e:
             logger.error("serial error: %s, reopening in %ds", e, RECONNECT_INTERVAL)
             try:
                 ser.close()
@@ -169,7 +288,7 @@ async def run_bridge(port: str, baud: int, server: str, mock: bool):
                     ser = open_serial(port, baud, mock)
                     logger.info("serial port reopened")
                     break
-                except (serial.SerialException, OSError) as e2:
+                except (SerialException, OSError, RuntimeError) as e2:
                     logger.error("serial reopen failed: %s, retrying in %ds", e2, RECONNECT_INTERVAL)
                     await asyncio.sleep(RECONNECT_INTERVAL)
         finally:
@@ -188,6 +307,8 @@ def main():
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"baud rate (default: {DEFAULT_BAUD})")
     parser.add_argument("--server", default=DEFAULT_SERVER, help=f"websocket server (default: {DEFAULT_SERVER})")
     parser.add_argument("--mock", action="store_true", help="use mock serial data")
+    parser.add_argument("--board-id", default="A", help="board id injected into websocket messages")
+    parser.add_argument("--board-name", default="greenhouse-a", help="human-readable board name")
     args = parser.parse_args()
 
     logger.info("=" * 50)
@@ -196,10 +317,11 @@ def main():
     logger.info("  baud   : %d", args.baud)
     logger.info("  server : %s", args.server)
     logger.info("  mode   : %s", "MOCK" if args.mock else "HARDWARE")
+    logger.info("  board  : %s (%s)", args.board_id, args.board_name)
     logger.info("=" * 50)
 
     try:
-        asyncio.run(run_bridge(args.port, args.baud, args.server, args.mock))
+        asyncio.run(run_bridge(args.port, args.baud, args.server, args.mock, args.board_id, args.board_name))
     except KeyboardInterrupt:
         logger.info("bridge stopped by user")
         sys.exit(0)

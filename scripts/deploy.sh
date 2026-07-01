@@ -31,11 +31,14 @@ echo "[5/5] Installing deps & configuring server..."
 ssh "$SERVER" bash <<'REMOTE_SCRIPT'
 set -e
 
-cd /home/ubuntu/smart-agri/backend
-pip3 install -q fastapi uvicorn sqlalchemy aiosqlite pydantic python-jose passlib bcrypt 2>/dev/null || true
+cd /home/ubuntu/smart-agri
+if [ ! -x /home/ubuntu/smart-agri/venv/bin/python3 ]; then
+  python3 -m venv /home/ubuntu/smart-agri/venv
+fi
+/home/ubuntu/smart-agri/venv/bin/python3 -m pip install -q -r /home/ubuntu/smart-agri/backend/requirements.txt
+/home/ubuntu/smart-agri/venv/bin/python3 -m pip install -q -r /home/ubuntu/smart-agri/serial_bridge/requirements.txt
 
-if ! systemctl is-active --quiet smart-agri 2>/dev/null; then
-  sudo tee /etc/systemd/system/smart-agri.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/smart-agri.service > /dev/null <<EOF
 [Unit]
 Description=Smart Agriculture FastAPI
 After=network.target
@@ -44,16 +47,15 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/smart-agri/backend
-ExecStart=/usr/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8001
+ExecStart=/home/ubuntu/smart-agri/venv/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 EOF
-  sudo systemctl daemon-reload
-  sudo systemctl enable smart-agri
-fi
+sudo systemctl daemon-reload
+sudo systemctl enable smart-agri
 sudo systemctl restart smart-agri
 sleep 2
 systemctl is-active smart-agri && echo "Backend: OK" || echo "Backend: FAILED"
