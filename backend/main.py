@@ -45,7 +45,13 @@ from ws_manager import manager
 from control import cancel_all_auto_watering_tasks, check_and_control, set_manual_suppress
 from auth import hash_password, verify_password, create_access_token, get_current_user
 from weather import router as weather_router
-from sensor_facts import build_sensor_facts, sensor_field_catalog
+from sensor_facts import (
+    apply_actuator_offsets,
+    build_sensor_facts,
+    compute_model_values,
+    sensor_field_catalog,
+    update_actuator_offsets,
+)
 from time_utils import utc_now
 
 
@@ -64,6 +70,7 @@ class SystemState:
     auto_watering: dict[str, dict] = field(default_factory=dict)
     alarm_lights: dict[str, bool] = field(default_factory=dict)
     manual_until: dict[str, dict[str, str | None]] = field(default_factory=dict)
+    actuator_offsets: dict[str, float] = field(default_factory=dict)
     debug_events: list[dict] = field(default_factory=list)
 
 
@@ -112,8 +119,12 @@ async def ingest_sensor_data(data: dict):
     bridge_mode = _normalize_bridge_mode(data.get("bridge_mode") or app_state.boards.get(board_id, {}).get("bridge_mode"))
     is_test = bridge_mode == "mock"
     values = data.get("data", data)
-    facts = build_sensor_facts(values)
-    model_soil = facts["soil"]["value"]
+    base_model = compute_model_values({"temp": values["temp"], "humi": values["humi"], "light": values["light"]})
+    if not is_test:
+        update_actuator_offsets(app_state.actuator_offsets, app_state.actuators)
+    adjusted_model = apply_actuator_offsets(base_model, app_state.actuator_offsets, app_state.actuators) if not is_test else base_model
+    facts = build_sensor_facts(values, model_overrides=adjusted_model)
+    model_soil = adjusted_model["soil"]
     async with async_session() as session:
         await _touch_board(session, board_id, board_name, now, bridge_mode=bridge_mode)
         sensor_data = SensorData(
@@ -162,6 +173,7 @@ async def ingest_sensor_data(data: dict):
             bridge_mode=bridge_mode,
             is_test=is_test,
             sensor_data_id=sensor_data.id,
+            model_values=adjusted_model,
         )
 
 
@@ -559,6 +571,13 @@ async def create_test_sensor_sample(req: TestSensorSampleIn, _user: User = Depen
 async def manual_control(req: ControlRequest, _user: User = Depends(get_current_user)):
     result = await _handle_manual_control(req.device, req.action, req.board_id)
     return {"status": "ok", **result}
+
+
+@app.post("/api/reset-actuator-effects")
+async def reset_actuator_effects(_user: User = Depends(get_current_user)):
+    app_state.actuator_offsets.clear()
+    await _broadcast_status()
+    return {"status": "ok"}
 
 
 @app.put("/api/mode")

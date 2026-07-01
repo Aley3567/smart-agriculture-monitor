@@ -114,21 +114,22 @@ async def check_and_control(
     bridge_mode: str = "hardware",
     is_test: bool = False,
     sensor_data_id: int | None = None,
+    model_values: dict | None = None,
 ):
     result = await session.execute(select(Threshold))
     thresholds = {t.param_name: t for t in result.scalars().all()}
 
+    model = model_values or compute_model_values({
+        "temp": temperature,
+        "humi": humidity,
+        "light": light,
+    })
     values = {
         "temperature": temperature,
         "humidity": humidity,
         "light": light,
         "soil_moisture": soil_moisture,
     }
-    model = compute_model_values({
-        "temp": temperature,
-        "humi": humidity,
-        "light": light,
-    })
     values["soil_fertility"] = model["soil_fertility"]
     decisions = evaluate_thresholds(values, thresholds)
     await execute_decisions(

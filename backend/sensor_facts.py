@@ -121,24 +121,51 @@ def _jitter(temp: float, humi: float, light: float, freq: float) -> float:
     return math.sin((temp * 0.131 + humi * 0.257 + light * 0.413) * freq)
 
 
+ACTUATOR_EFFECTS = {
+    "pump": {"field": "soil", "rate": 5.0, "cap": 30.0, "decay": 3.0},
+    "fertilizer": {"field": "soil_fertility", "rate": 5.0, "cap": 30.0, "decay": 3.0},
+}
+
+
+def update_actuator_offsets(offsets: dict, actuators: dict) -> None:
+    for device, effect in ACTUATOR_EFFECTS.items():
+        field = effect["field"]
+        current = offsets.get(field, 0.0)
+        if actuators.get(device, False):
+            current = min(current + effect["rate"], effect["cap"])
+        else:
+            current = max(0.0, current - effect["decay"])
+        offsets[field] = round(current, 1)
+
+
+def apply_actuator_offsets(model_values: dict, offsets: dict, actuators: dict) -> dict:
+    result = dict(model_values)
+    for field, offset in offsets.items():
+        if field in result and offset > 0:
+            result[field] = round(_clamp(result[field] + offset, 0, 100), 1)
+    if actuators.get("pest_light", False):
+        result["infrared"] = 0.0
+    return result
+
+
 def compute_model_values(values: dict[str, Any]) -> dict[str, float]:
     temp = float(values.get("temp") or 0)
     humi = float(values.get("humi") or 0)
     light = float(values.get("light") or 0)
 
-    soil_raw = 56 + (humi - 50) * 0.35 - max(temp - 20, 0) * 1.0 + (light - 50) * 0.7
+    soil_raw = 47 + (humi - 50) * 0.35 - max(temp - 20, 0) * 1.0 - (light - 15) * 1.2
     soil = _clamp(soil_raw + _jitter(temp, humi, light, 7.3) * 0.5, 15, 75)
 
     ec_raw = 0.65 + soil * 0.016 + max(temp - 25, 0) * 0.015 - max(humi - 70, 0) * 0.004
     soil_ec = _clamp(ec_raw + _jitter(temp, humi, light, 13.1) * 0.015, 0.3, 2.6)
 
     soil_tds = soil_ec * 640
-    soil_fertility = _clamp(100 - abs(soil - 45) * 1.4 - abs(soil_ec - 1.25) * 22, 0, 100)
+    soil_fertility = _clamp(100 - abs(soil - 45) * 2.0 - abs(soil_ec - 1.25) * 22, 0, 100)
 
     co2_raw = 420 + max(100 - light, 0) * 2.8 + max(temp - 25, 0) * 7 + max(humi - 70, 0) * 2
     co2 = _clamp(co2_raw + _jitter(temp, humi, light, 3.7) * 8, 400, 1200)
 
-    infrared = 1.0 if light < 18 else 0.0
+    infrared = 1.0 if light > 25 else 0.0
 
     return {
         "soil": round(soil, 1),
@@ -150,8 +177,8 @@ def compute_model_values(values: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def build_sensor_facts(values: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    model_values = compute_model_values(values)
+def build_sensor_facts(values: dict[str, Any], model_overrides: dict = None) -> dict[str, dict[str, Any]]:
+    model_values = model_overrides or compute_model_values(values)
     facts = {}
     for key, field in SENSOR_FIELDS.items():
         value = values.get(key)

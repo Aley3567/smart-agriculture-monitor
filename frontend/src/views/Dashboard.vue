@@ -363,6 +363,12 @@ async function toggleActuator(device) {
   } catch { /* control failure is surfaced by unchanged status */ }
 }
 
+async function resetActuatorEffects() {
+  try {
+    await api.post('/api/reset-actuator-effects')
+  } catch { /* ignore */ }
+}
+
 function refresh() {
   fetchStatus()
   fetchRecentSamples()
@@ -541,6 +547,9 @@ onMounted(refresh)
             <strong>{{ actionText(recentAction) }}</strong>
             <small v-if="recentAction">{{ actionSourceText(recentAction) }} · {{ recentAction.reason || '—' }} · {{ formatTimeOnly(recentAction.timestamp) }}</small>
           </div>
+          <button class="btn btn-soft btn-reset-effects" type="button" @click="resetActuatorEffects">
+            重置执行器效果
+          </button>
         </section>
 
         <section class="card side-panel debug-panel">
@@ -1120,6 +1129,13 @@ onMounted(refresh)
   border: 1px solid var(--border-light);
   border-radius: 7px;
   background: #fff;
+}
+
+.btn-reset-effects {
+  margin-top: 10px;
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 0;
 }
 
 .alarm-panel .side-title button,
