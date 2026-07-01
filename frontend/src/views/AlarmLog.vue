@@ -57,6 +57,7 @@ const rows = computed(() => tableData.value.map((item) => {
     source,
     sourceKind: sourceKindOf(source),
     sourceRaw: item.source || 'bridge',
+    bridgeMode: item.bridge_mode || 'unknown',
     isTest: Boolean(item.is_test),
     sensorDataId: item.sensor_data_id,
     param: PARAM_LABEL[item.param_name] || item.param_name,
@@ -132,6 +133,13 @@ function sourceKindOf(source) {
   if (source.label === '控制') return 'control'
   if (source.label === '气象接口') return 'api'
   return 'system'
+}
+
+function bridgeModeText(mode) {
+  if (mode === 'hardware') return '真实串口'
+  if (mode === 'mock') return '模拟数据'
+  if (mode === 'test_injection') return '测试注入'
+  return '历史未知'
 }
 
 function barHeight(count) {
@@ -351,7 +359,7 @@ onMounted(() => {
           <dl>
             <div><dt>告警内容</dt><dd>{{ selected.param }}{{ selected.direction === 'low' ? '低于阈值' : '超过阈值' }}</dd></div>
             <div><dt>来源说明</dt><dd><b class="source-badge" :class="selected.source.className">{{ selected.source.label }}</b></dd></div>
-            <div><dt>数据来源</dt><dd>{{ selected.sourceRaw }}<b v-if="selected.isTest" class="injection-tag">测试注入</b></dd></div>
+            <div><dt>数据来源</dt><dd>{{ selected.sourceRaw }} · {{ bridgeModeText(selected.bridgeMode) }}<b v-if="selected.isTest" class="injection-tag">测试数据</b></dd></div>
             <div><dt>采样记录</dt><dd>{{ selected.sensorDataId || '未关联' }}</dd></div>
             <div><dt>首次触发</dt><dd>{{ selected.time }}</dd></div>
             <div><dt>最后触发</dt><dd>{{ selected.time }}</dd></div>

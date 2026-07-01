@@ -1,9 +1,16 @@
 /**
  * @file    SampleApp.c
  * @brief   智慧农业监测系统 - 终端节点主应用
- * @note    功能：DHT11温湿度采集、光照ADC采集、模拟土壤湿度、ZigBee发送、接收控制命令、OLED显示
+ * @note    功能：DHT11温湿度采集、GL5516光照ADC采集、ZigBee发送、接收控制命令、OLED显示
+ *          土壤湿度由云端模型推导，固件只发 t/h/l 三字段
  *          基于 Z-Stack 2.5.1a SampleApp 例程修改，CC2530 (8051内核)
  */
+
+/* 终端节点启用 OLED 显示（SSD1306 128x64 软件SPI），需同时将 HalOled.c 加入 IAR 工程 */
+/* 协调器（ZDO_COORDINATOR）不接 OLED，自动跳过 */
+#if !defined(ZDO_COORDINATOR)
+#define HAL_OLED
+#endif
 
 /*********************************************************************
  * 头文件包含
@@ -84,8 +91,6 @@ static afAddrType_t SampleApp_DstAddr;
 static uint8  dht11_temp  = 25;   /* 温度（整数部分） */
 static uint8  dht11_humi  = 60;   /* 湿度（整数部分） */
 static uint16 light_value = 50;   /* 相对光照值 (0~100) */
-static uint8  soil_value  = 45;   /* 土壤湿度 (%) */
-
 /* 执行器状态：0=关, 1=开 */
 static uint8 pump_state   = 0;    /* 水泵继电器 P0.6 + 指示灯 P1.0 */
 static uint8 fert_state   = 0;    /* 施肥指示灯 P1.1 */
@@ -108,7 +113,6 @@ static uint8 DHT11_ReadByte(void);
 static void  DHT11_DelayUs(uint16 us);
 
 static uint16 SampleApp_ReadLight(void);
-static void SampleApp_SimulateSoil(void);
 static uint16 SampleApp_SimpleRand(void);
 static void SampleApp_ApplyActuatorOutputs(void);
 
@@ -288,31 +292,6 @@ static uint16 SampleApp_ReadLight(void)
     return (uint16)((sum + 82) / 164);  /* round(sum / 4 * 100 / 4095) */
 }
 
-/*********************************************************************
- * @fn      SampleApp_SimulateSoil
- * @brief   模拟土壤湿度传感器数据（基础值 + 随机波动）
- * @note    课程设计模拟：未浇水逐步变干，水泵开启后回升，范围 25~60%
- *********************************************************************/
-static void SampleApp_SimulateSoil(void)
-{
-    int8 delta;
-
-    if (pump_state)
-    {
-        /* 水泵开启后土壤湿度回升，便于触发后端 stop_at_or_above 关泵规则。 */
-        delta = (int8)(2 + (SampleApp_SimpleRand() % 3));
-    }
-    else
-    {
-        /* 未浇水时缓慢变干，便于触发后端 start_below 自动浇水规则。 */
-        delta = -(int8)(1 + (SampleApp_SimpleRand() % 3));
-    }
-    soil_value = (uint8)((int8)soil_value + delta);
-
-    /* 限幅 */
-    if (soil_value < 25) soil_value = 25;
-    if (soil_value > 60) soil_value = 60;
-}
 
 /*********************************************************************
  * @fn      SampleApp_ApplyActuatorOutputs
@@ -565,12 +544,11 @@ static void SampleApp_SendPeriodicMessage(void)
         /* 读取失败则继续使用上次的值 */
     }
 
-    /* ---- 2. 读取光照并模拟土壤湿度 ---- */
+    /* ---- 2. 读取光照 ---- */
     light_value = SampleApp_ReadLight();
-    SampleApp_SimulateSoil();
 
     /* ---- 3. 组装数据字符串 ---- */
-    /* 格式: "t:25-h:60-l:50-s:45" */
+    /* 格式: "t:25-h:60-l:50" (soil 已移至云端模型推导) */
 
     /* t:xx */
     send_buf[len++] = 't';
@@ -598,15 +576,6 @@ static void SampleApp_SendPeriodicMessage(void)
     if (light_value >= 10)
         send_buf[len++] = ((light_value / 10) % 10) + '0';
     send_buf[len++] = (light_value % 10) + '0';
-
-    send_buf[len++] = '-';
-
-    /* s:xx */
-    send_buf[len++] = 's';
-    send_buf[len++] = ':';
-    if (soil_value >= 10)
-        send_buf[len++] = (soil_value / 10) + '0';
-    send_buf[len++] = (soil_value % 10) + '0';
 
     send_buf[len] = '\0';
 
@@ -640,7 +609,7 @@ static void SampleApp_SendPeriodicMessage(void)
  *********************************************************************/
 static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
 {
-    uint8 *cmd_data;
+    uint8 cmd_buf[32];
     uint16 cmd_len;
 
     if (pckt->clusterId != SAMPLEAPP_CTRL_CLUSTERID)
@@ -648,49 +617,47 @@ static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
         return;  /* 不是控制命令簇，忽略 */
     }
 
-    cmd_data = pckt->cmd.Data;
-    cmd_len  = pckt->cmd.DataLength;
+    cmd_len = pckt->cmd.DataLength;
 
-    /* 确保字符串以 '\0' 结尾，方便 strstr 匹配 */
-    if (cmd_len > 0 && cmd_len < 30)
+    if (cmd_len == 0 || cmd_len >= sizeof(cmd_buf))
     {
-        /* cmd_data 本身可能不含 '\0'，但 strstr 需要，
-           这里直接在数据末尾补 '\0'（Z-Stack 消息缓冲区通常有余量） */
-        cmd_data[cmd_len] = '\0';
+        return;
     }
+    memcpy(cmd_buf, pckt->cmd.Data, cmd_len);
+    cmd_buf[cmd_len] = '\0';
 
     /* ---- 水泵继电器 (P0.6) + LED1 指示 (P1.0) ---- */
-    if (strstr((char *)cmd_data, "BLEGLED1") != NULL)
+    if (strstr((char *)cmd_buf, "BLEGLED1") != NULL)
     {
         pump_state = 1;
     }
-    else if (strstr((char *)cmd_data, "BLEKLED1") != NULL)
+    else if (strstr((char *)cmd_buf, "BLEKLED1") != NULL)
     {
         pump_state = 0;
     }
 
     /* ---- LED2/施肥 (P1.1，低电平亮) ---- */
-    if (strstr((char *)cmd_data, "BLEGLED2") != NULL)
+    if (strstr((char *)cmd_buf, "BLEGLED2") != NULL)
     {
         fert_state = 1;
     }
-    else if (strstr((char *)cmd_data, "BLEKLED2") != NULL)
+    else if (strstr((char *)cmd_buf, "BLEKLED2") != NULL)
     {
         fert_state = 0;
     }
 
     /* ---- LED3/灭虫灯 (P1.6，低电平亮) ---- */
-    if (strstr((char *)cmd_data, "BLEGLED3") != NULL)
+    if (strstr((char *)cmd_buf, "BLEGLED3") != NULL)
     {
         pest_light_state = 1;
     }
-    else if (strstr((char *)cmd_data, "BLEKLED3") != NULL)
+    else if (strstr((char *)cmd_buf, "BLEKLED3") != NULL)
     {
         pest_light_state = 0;
     }
 
     /* ---- Alarm chaser on P1.1/P1.6 only; P0.6 pump relay is never touched here. ---- */
-    if (strstr((char *)cmd_data, "BLEALARM1") != NULL)
+    if (strstr((char *)cmd_buf, "BLEALARM1") != NULL)
     {
         alarm_state = 1;
         alarm_phase = 0;
@@ -698,7 +665,7 @@ static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
                            SAMPLEAPP_ALARM_STEP_EVT,
                            300);
     }
-    else if (strstr((char *)cmd_data, "BLEALARM0") != NULL)
+    else if (strstr((char *)cmd_buf, "BLEALARM0") != NULL)
     {
         alarm_state = 0;
         alarm_phase = 0;

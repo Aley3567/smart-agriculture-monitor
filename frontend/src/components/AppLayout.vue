@@ -104,7 +104,7 @@ function persistReadAlarms() {
 function sourceForParam(param) {
   if (['temperature', 'humidity'].includes(param)) return sourceMeta('measured')
   if (param === 'light') return sourceMeta('measured')
-  if (['soil_moisture', 'soil'].includes(param)) return sourceMeta('simulated_firmware')
+  if (['soil_moisture', 'soil'].includes(param)) return sourceMeta('computed_backend')
   return sourceMeta('system')
 }
 

@@ -48,7 +48,7 @@ DEFAULT_CONTROL_RULES = {
         "enabled": True,
         "start_below": 35.0,
         "stop_at_or_above": 45.0,
-        "consecutive_samples": 3,
+        "consecutive_samples": 5,
         "max_run_sec": 20,
         "cooldown_sec": 30,
     },

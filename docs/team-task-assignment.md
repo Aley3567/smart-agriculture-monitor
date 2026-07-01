@@ -125,11 +125,12 @@ python bridge.py --mock
 - [ ] IAR 打开协调器工程 → `CoordinatorEB` → F7 编译 → 0 Errors
 - [ ] CC Debugger 连协调器板 → Ctrl+D 烧写 → Ctrl+Shift+D 退出
 - [ ] 协调器上电（先不断电）
-- [ ] IAR 打开终端节点工程 → `EndDeviceEB` → F7 编译 → 0 Errors
+- [ ] IAR 打开终端节点工程 → **`EndDeviceEB`（不是 EndDeviceEB-1）** → F7 编译 → 0 Errors
 - [ ] CC Debugger 改连终端节点板 → Ctrl+D 烧写 → Ctrl+Shift+D 退出
 
 > 编译报错？看 `docs/hardware-quick-debug.md` 阶段一。
-> OLED 报 `HalOled.h` 缺失：**不要**加 `HAL_OLED` 宏，直接编译跳过。
+> 链接报 `Undefined external "SampleApp_Init"`？检查是不是误选了 `EndDeviceEB-1`——该配置把 SampleApp.c 排除了。换回 `EndDeviceEB` 即可。
+> OLED 已在源码中通过 `#define HAL_OLED` 启用，需要把 HalOled.c/HalOled.h/HalOledFont.h 加入工程。
 
 > ⚠️ **最容易翻车 — 组网参数必须一致：** 两个工程的 `f8wConfig.cfg` 里 `ZDAPP_CONFIG_PAN_ID` 和 `DEFAULT_CHANLIST`（信道）必须**完全相同**，否则两板组不上网、串口无数据。多组同场要错开 PAN ID 防串数据。
 

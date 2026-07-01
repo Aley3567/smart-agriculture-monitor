@@ -83,6 +83,8 @@ C:\Texas Instruments\ZStack-CC2530-2.3.0-1.4.0\Projects\zstack\Samples\SampleApp
 
 > 上表是普通 CC2530 的 `CoordinatorEB / EndDeviceEB`。若射频模块带 **CC2591 功放**，改选对应的 `-Pro`（`CoordinatorEB-Pro / EndDeviceEB-Pro`）。**不确定就先用不带 `-Pro` 的**，能组网即可；下拉框实际有哪些以打开的工程为准。
 
+> **注意：绝对不要选 `EndDeviceEB-1`**。该配置在 .ewp 中把 SampleApp.c 标记为 excluded，链接时会报 `Undefined external "SampleApp_Init"` / `SampleApp_ProcessEvent`。正确配置是 `EndDeviceEB`（不带 -1）。
+
 ### 步骤 5: 编译设置
 
 确认工程设置中以下预编译宏已定义：

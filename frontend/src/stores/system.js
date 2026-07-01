@@ -14,6 +14,7 @@ export const useSystemStore = defineStore('system', () => {
   })
   const autoWatering = ref({})
   const boards = ref({})
+  const alarmLights = ref({})
   const debugEvents = ref([])
 
   function setWsConnected(val) {
@@ -26,6 +27,7 @@ export const useSystemStore = defineStore('system', () => {
     if (status.actuators) actuators.value = { ...status.actuators }
     if (status.boards) boards.value = { ...status.boards }
     if (status.auto_watering) autoWatering.value = { ...status.auto_watering }
+    if (status.alarm_lights) alarmLights.value = { ...status.alarm_lights }
     if (Array.isArray(status.debug_events)) debugEvents.value = status.debug_events.slice(0, 80)
   }
 
@@ -56,6 +58,7 @@ export const useSystemStore = defineStore('system', () => {
     deviceOnline,
     mode,
     actuators,
+    alarmLights,
     autoWatering,
     boards,
     debugEvents,

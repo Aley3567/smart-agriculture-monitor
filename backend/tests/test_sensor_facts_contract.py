@@ -26,7 +26,8 @@ config.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
 from database import Base, async_session, engine  # noqa: E402
 from main import app, app_state, ingest_sensor_data  # noqa: E402
 from control import cancel_all_auto_watering_tasks, evaluate_thresholds  # noqa: E402
-from models import AlarmLog, Board, ControlLog, ControlRule, SensorData, Threshold  # noqa: E402
+from models import AlarmLog, Board, ControlLog, ControlRule, SensorData, Threshold, User  # noqa: E402
+from auth import hash_password, create_access_token  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 from ws_manager import WSManager, manager  # noqa: E402
 
@@ -73,7 +74,17 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                 light=50.0,
                 soil=47.0,
             ))
+            test_user = User(
+                username="testuser",
+                hashed_password=hash_password("testpass123"),
+                display_name="Test User",
+            )
+            session.add(test_user)
             await session.commit()
+
+            await session.refresh(test_user)
+            token = create_access_token(test_user.id, test_user.username)
+            self._auth_headers = {"Authorization": f"Bearer {token}"}
 
     async def asyncTearDown(self):
         cancel_all_auto_watering_tasks()
@@ -94,18 +105,19 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["fields"]["light"]["source"], "measured")
         self.assertEqual(payload["fields"]["light"]["unit"], "相对值")
         self.assertIn("GL5516 P0.7 ADC", payload["fields"]["light"]["detail"])
-        self.assertEqual(payload["fields"]["soil"]["source"], "simulated_firmware")
+        self.assertEqual(payload["fields"]["soil"]["source"], "computed_backend")
 
         row = payload["items"][0]
         self.assertEqual(row["temp"], 26.0)
         self.assertEqual(row["source"], "bridge")
+        self.assertEqual(row["bridge_mode"], "hardware")
         self.assertFalse(row["is_test"])
         self.assertEqual(row["facts"]["temp"]["value"], 26.0)
         self.assertEqual(row["facts"]["temp"]["source"], "measured")
         self.assertEqual(row["facts"]["light"]["source"], "measured")
         self.assertEqual(row["facts"]["light"]["unit"], "相对值")
         self.assertIn("GL5516 P0.7 ADC", row["facts"]["light"]["detail"])
-        self.assertEqual(row["facts"]["soil"]["source"], "simulated_firmware")
+        self.assertEqual(row["facts"]["soil"]["source"], "computed_backend")
         self.assertTrue(row["facts"]["soil"]["available"])
 
     async def test_history_source_filter_splits_real_and_test_rows(self):
@@ -137,13 +149,43 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         real_payload = real_response.json()
         self.assertEqual(real_payload["total"], 1)
         self.assertEqual(real_payload["items"][0]["source"], "bridge")
+        self.assertEqual(real_payload["items"][0]["bridge_mode"], "hardware")
         self.assertFalse(real_payload["items"][0]["is_test"])
 
         self.assertEqual(test_response.status_code, 200)
         test_payload = test_response.json()
         self.assertEqual(test_payload["total"], 1)
         self.assertEqual(test_payload["items"][0]["source"], "fixture")
+        self.assertEqual(test_payload["items"][0]["bridge_mode"], "hardware")
         self.assertTrue(test_payload["items"][0]["is_test"])
+
+    async def test_mock_bridge_samples_are_marked_as_test_data(self):
+        await ingest_sensor_data({
+            "board_id": "A",
+            "board_name": "greenhouse-a",
+            "bridge_mode": "mock",
+            "data": {"temp": 39.5, "humi": 55.0, "light": 500.0, "soil": 45.0},
+        })
+
+        async with async_session() as session:
+            rows = (await session.execute(select(SensorData).order_by(SensorData.id.desc()))).scalars().all()
+            alarms = (await session.execute(select(AlarmLog).order_by(AlarmLog.id.desc()))).scalars().all()
+
+        self.assertEqual(rows[0].bridge_mode, "mock")
+        self.assertTrue(rows[0].is_test)
+        self.assertGreaterEqual(len(alarms), 1)
+        self.assertEqual(alarms[0].bridge_mode, "mock")
+        self.assertTrue(alarms[0].is_test)
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            real_response = await client.get("/api/history", params={"source": "real"})
+            test_response = await client.get("/api/history", params={"source": "test"})
+
+        self.assertEqual(real_response.status_code, 200)
+        self.assertEqual(test_response.status_code, 200)
+        self.assertNotIn("mock", {row["bridge_mode"] for row in real_response.json()["items"]})
+        self.assertIn("mock", {row["bridge_mode"] for row in test_response.json()["items"]})
 
     async def test_sensor_fields_exposes_backend_model_outputs(self):
         transport = httpx.ASGITransport(app=app)
@@ -177,6 +219,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"device": "fan", "action": "on"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 400)
@@ -192,6 +235,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"device": "pump", "action": "toggle"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 400)
@@ -207,6 +251,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"device": "alarm_light", "action": "on"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 400)
@@ -230,6 +275,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                     "max_run_sec": 15,
                     "cooldown_sec": 5,
                 },
+                headers=self._auth_headers,
             )
             get_after_response = await client.get("/api/control-rules/soil-moisture-pump")
 
@@ -239,7 +285,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(default_rule["enabled"])
         self.assertEqual(default_rule["start_below"], 35.0)
         self.assertEqual(default_rule["stop_at_or_above"], 45.0)
-        self.assertEqual(default_rule["consecutive_samples"], 3)
+        self.assertEqual(default_rule["consecutive_samples"], 5)
         self.assertEqual(default_rule["max_run_sec"], 20)
         self.assertEqual(default_rule["cooldown_sec"], 30)
 
@@ -256,6 +302,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"device": "pump", "action": "on"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -280,6 +327,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"device": "pest_light", "action": "on"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -298,6 +346,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"device": "skylight", "action": "off"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -331,10 +380,9 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                 "board_id": "R1",
                 "board_name": "greenhouse-r1",
                 "data": {
-                    "temp": 40.0,
-                    "humi": 60.0,
-                    "light": 50.0,
-                    "soil": 45.0,
+                    "temp": 36.0,
+                    "humi": 75.0,
+                    "light": 30.0,
                 },
             })
         finally:
@@ -462,6 +510,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
             response = await client.post(
                 "/api/control",
                 json={"board_id": "A", "device": "pump", "action": "on"},
+                headers=self._auth_headers,
             )
 
         self.assertEqual(response.status_code, 200)
@@ -483,6 +532,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                 response = await client.post(
                     "/api/control",
                     json={"board_id": "B", "device": "pump", "action": "on"},
+                    headers=self._auth_headers,
                 )
         finally:
             manager.disconnect_bridge(bridge_a)
@@ -655,11 +705,11 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                 "/api/test/sensor-sample",
                 json={
                     "board_id": "T1",
-                    "temperature": 40.0,
-                    "humidity": 60.0,
-                    "light": 50.0,
-                    "soil_moisture": 45.0,
+                    "temperature": 36.0,
+                    "humidity": 75.0,
+                    "light": 30.0,
                 },
+                headers=self._auth_headers,
             )
             history_response = await client.get(
                 "/api/history",
@@ -674,8 +724,8 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sample["board_id"], "T1")
         self.assertEqual(sample["source"], "demo_injection")
         self.assertTrue(sample["is_test"])
-        self.assertEqual(sample["temp"], 40.0)
-        self.assertEqual(sample["facts"]["temp"]["value"], 40.0)
+        self.assertEqual(sample["temp"], 36.0)
+        self.assertEqual(sample["facts"]["temp"]["value"], 36.0)
 
         self.assertEqual(history_response.status_code, 200)
         history = history_response.json()
@@ -716,9 +766,9 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                         "temperature": 40.0,
                         "humidity": 60.0,
                         "light": 50.0,
-                        "soil_moisture": 45.0,
                         "allow_control": True,
                     },
+                    headers=self._auth_headers,
                 )
                 control_response = await client.get("/api/control-log", params={"board_id": "T1"})
         finally:
@@ -736,18 +786,18 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         try:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                await client.put("/api/mode", json={"mode": "manual"})
+                await client.put("/api/mode", json={"mode": "manual"}, headers=self._auth_headers)
                 for _ in range(3):
                     response = await client.post(
                         "/api/test/sensor-sample",
                         json={
                             "board_id": "T1",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": 20.0,
+                            "temperature": 28.0,
+                            "humidity": 40.0,
+                            "light": 70.0,
                             "allow_control": True,
                         },
+                        headers=self._auth_headers,
                     )
                     self.assertEqual(response.status_code, 200)
                 alarms_response = await client.get("/api/alarms", params={"board_id": "T1"})
@@ -757,10 +807,10 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(alarms_response.status_code, 200)
         payload = alarms_response.json()
-        self.assertEqual(payload["total"], 6)
+        self.assertEqual(payload["total"], 3)
         self.assertEqual(
             sorted({item["param_name"] for item in payload["items"]}),
-            ["soil_fertility", "soil_moisture"],
+            ["soil_moisture"],
         )
         self.assertEqual(control_response.status_code, 200)
         self.assertEqual(control_response.json()["total"], 0)
@@ -778,12 +828,12 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                         "/api/test/sensor-sample",
                         json={
                             "board_id": "T1",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": 20.0,
+                            "temperature": 28.0,
+                            "humidity": 40.0,
+                            "light": 70.0,
                             "allow_control": False,
                         },
+                        headers=self._auth_headers,
                     )
                     self.assertEqual(response.status_code, 200)
                 control_response = await client.get("/api/control-log", params={"board_id": "T1"})
@@ -801,22 +851,22 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         try:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                for index in range(3):
+                for index in range(5):
                     response = await client.post(
                         "/api/test/sensor-sample",
                         json={
                             "board_id": "T1",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": 20.0,
+                            "temperature": 28.0,
+                            "humidity": 40.0,
+                            "light": 70.0,
                             "allow_control": True,
                         },
+                        headers=self._auth_headers,
                     )
                     self.assertEqual(response.status_code, 200)
 
                     control_response = await client.get("/api/control-log", params={"board_id": "T1"})
-                    expected_total = 0 if index < 2 else 1
+                    expected_total = 0 if index < 4 else 1
                     self.assertEqual(control_response.json()["total"], expected_total)
                 status_response = await client.get("/api/status")
         finally:
@@ -854,30 +904,31 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                         "max_run_sec": 10,
                         "cooldown_sec": 5,
                     },
+                    headers=self._auth_headers,
                 )
                 for _ in range(3):
                     response = await client.post(
                         "/api/test/sensor-sample",
                         json={
                             "board_id": "T1",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": 20.0,
+                            "temperature": 28.0,
+                            "humidity": 40.0,
+                            "light": 70.0,
                             "allow_control": True,
                         },
+                        headers=self._auth_headers,
                     )
                     self.assertEqual(response.status_code, 200)
                 recovered_response = await client.post(
                     "/api/test/sensor-sample",
                     json={
                         "board_id": "T1",
-                        "temperature": 26.0,
-                        "humidity": 60.0,
-                        "light": 50.0,
-                        "soil_moisture": 50.0,
+                        "temperature": 22.0,
+                        "humidity": 70.0,
+                        "light": 20.0,
                         "allow_control": True,
                     },
+                    headers=self._auth_headers,
                 )
                 status_response = await client.get("/api/status")
         finally:
@@ -914,18 +965,19 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                         "max_run_sec": 1,
                         "cooldown_sec": 2,
                     },
+                    headers=self._auth_headers,
                 )
                 for _ in range(3):
                     response = await client.post(
                         "/api/test/sensor-sample",
                         json={
                             "board_id": "T1",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": 20.0,
+                            "temperature": 28.0,
+                            "humidity": 40.0,
+                            "light": 70.0,
                             "allow_control": True,
                         },
+                        headers=self._auth_headers,
                     )
                     self.assertEqual(response.status_code, 200)
                 await asyncio.sleep(1.1)
@@ -963,19 +1015,12 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                         "max_run_sec": 10,
                         "cooldown_sec": 30,
                     },
+                    headers=self._auth_headers,
                 )
-                for soil_moisture in [20.0, 20.0, 20.0, 50.0, 20.0, 20.0, 20.0]:
-                    response = await client.post(
-                        "/api/test/sensor-sample",
-                        json={
-                            "board_id": "T1",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": soil_moisture,
-                            "allow_control": True,
-                        },
-                    )
+                low_sample = {"board_id": "T1", "temperature": 28.0, "humidity": 40.0, "light": 70.0, "allow_control": True}
+                recovered_sample = {"board_id": "T1", "temperature": 22.0, "humidity": 70.0, "light": 20.0, "allow_control": True}
+                for sample in [low_sample, low_sample, low_sample, recovered_sample, low_sample, low_sample, low_sample]:
+                    response = await client.post("/api/test/sensor-sample", json=sample, headers=self._auth_headers)
                     self.assertEqual(response.status_code, 200)
                 control_response = await client.get("/api/control-log", params={"board_id": "T1"})
         finally:
@@ -1004,6 +1049,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["type"], "sensor_data")
         self.assertEqual(payload["board_id"], "A")
         self.assertEqual(payload["board_name"], "greenhouse-a")
+        self.assertEqual(payload["bridge_mode"], "hardware")
         self.assertEqual(payload["data"]["temp"], 25.0)
 
         self.assertTrue(should_apply_control({"type": "control", "command": "BLEGLED1"}, "A"))
@@ -1050,17 +1096,17 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
         try:
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                for _ in range(3):
+                for _ in range(5):
                     response = await client.post(
                         "/api/test/sensor-sample",
                         json={
                             "board_id": "B",
-                            "temperature": 26.0,
-                            "humidity": 60.0,
-                            "light": 50.0,
-                            "soil_moisture": 20.0,
+                            "temperature": 28.0,
+                            "humidity": 40.0,
+                            "light": 70.0,
                             "allow_control": True,
                         },
+                        headers=self._auth_headers,
                     )
                     self.assertEqual(response.status_code, 200)
         finally:

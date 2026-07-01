@@ -28,16 +28,13 @@ async def run(server: str, interval: float):
                 while True:
                     temp = round(26 + 6 * math.sin(t / 12) + random.uniform(-1.5, 1.5), 1)
                     humi = round(60 + 15 * math.sin(t / 18 + 1) + random.uniform(-3, 3), 1)
-                    light = round(1000 + 750 * math.sin(t / 20) + random.uniform(-60, 60))
-                    soil = round(45 + 13 * math.sin(t / 25 + 2) + random.uniform(-3, 3), 1)
-                    # 偶发越界,触发自动控制与报警
+                    light = round(50 + 35 * math.sin(t / 20) + random.uniform(-3, 3))
                     if t % 37 == 15:
                         temp = 39.5
-                    if t % 41 == 25:
-                        soil = 17.0
                     await ws.send(json.dumps({
                         "type": "sensor_data",
-                        "data": {"temp": temp, "humi": humi, "light": light, "soil": soil},
+                        "bridge_mode": "mock",
+                        "data": {"temp": temp, "humi": humi, "light": light},
                     }))
                     t += 1
                     await asyncio.sleep(interval)

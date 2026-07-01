@@ -10,6 +10,7 @@ export const useSensorStore = defineStore('sensor', () => {
   const currentMeta = ref({
     board_id: DEFAULT_BOARD_ID,
     source: '',
+    bridge_mode: '',
     is_test: false,
     timestamp: null,
   })
@@ -21,6 +22,7 @@ export const useSensorStore = defineStore('sensor', () => {
   })
 
   const MAX_POINTS = 60
+  const MAX_ALARMS = 80
   const history = ref({
     timestamps: [],
     temp: [],
@@ -114,6 +116,7 @@ export const useSensorStore = defineStore('sensor', () => {
     return {
       board_id: sample.board_id || DEFAULT_BOARD_ID,
       source: sample.source || '',
+      bridge_mode: sample.bridge_mode || '',
       is_test: Boolean(sample.is_test),
       timestamp: sample.timestamp || timestamp || null,
     }
@@ -156,6 +159,9 @@ export const useSensorStore = defineStore('sensor', () => {
       ...alarm,
       _received: new Date().toISOString(),
     })
+    if (alarms.value.length > MAX_ALARMS) {
+      alarms.value.splice(MAX_ALARMS)
+    }
   }
 
   function hydrateSamples(rows = [], catalog = null) {

@@ -8,6 +8,9 @@ export const SOURCE_META = {
   api: { label: '气象接口', className: 'source-api', tone: 'blue' },
   control: { label: '控制', className: 'source-control', tone: 'purple' },
   system: { label: '系统', className: 'source-system', tone: 'gray' },
+  bridge_hardware: { label: '真实串口', className: 'source-measured', tone: 'blue' },
+  bridge_mock: { label: '模拟数据', className: 'source-test', tone: 'orange' },
+  bridge_unknown: { label: '历史未知', className: 'source-pending', tone: 'gray' },
   demo_injection: { label: '测试注入', className: 'source-test', tone: 'orange' },
   pending: { label: '待接入', className: 'source-pending', tone: 'gray' },
 }
@@ -51,9 +54,9 @@ export const SENSOR_FIELDS = {
     param: 'soil_moisture',
     label: '土壤湿度',
     unit: '%',
-    source: 'simulated_firmware',
-    detail: '固件 SampleApp_SimulateSoil · 土壤传感器待接入',
-    category: 'measured',
+    source: 'computed_backend',
+    detail: '后端模型推导：由温度、空气湿度、光照推导',
+    category: 'model',
     color: '#16a34a',
     available: true,
   },
@@ -114,8 +117,8 @@ export const SENSOR_FIELDS = {
   },
 }
 
-export const MEASURED_FIELD_KEYS = ['temp', 'humi', 'light', 'soil']
-export const MODEL_FIELD_KEYS = ['co2', 'soil_ec', 'soil_tds', 'soil_fertility', 'infrared']
+export const MEASURED_FIELD_KEYS = ['temp', 'humi', 'light']
+export const MODEL_FIELD_KEYS = ['soil', 'co2', 'soil_ec', 'soil_tds', 'soil_fertility', 'infrared']
 
 export const DEVICE_META = {
   pump: {

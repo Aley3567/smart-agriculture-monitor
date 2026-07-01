@@ -28,9 +28,8 @@ class MockSerial:
 
         t = round(random.uniform(18, 35), 1)
         h = round(random.uniform(30, 80), 1)
-        l = round(random.uniform(200, 2000), 1)
-        s = round(random.uniform(25, 75), 1)
-        line = f"t:{t}-h:{h}-l:{l}-s:{s}\r\n"
+        l = round(random.uniform(0, 100), 1)
+        line = f"t:{t}-h:{h}-l:{l}\r\n"
         return line.encode("utf-8")
 
     def write(self, data):

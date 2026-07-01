@@ -67,6 +67,7 @@ async def execute_decisions(
     board_id: str = "A",
     allow_control: bool = True,
     alarm_source: str = "bridge",
+    bridge_mode: str = "hardware",
     is_test: bool = False,
     sensor_data_id: int | None = None,
 ):
@@ -79,6 +80,7 @@ async def execute_decisions(
             threshold=d.threshold,
             action=d.action,
             source=alarm_source,
+            bridge_mode=bridge_mode,
             is_test=is_test,
             sensor_data_id=sensor_data_id,
         ))
@@ -90,6 +92,7 @@ async def execute_decisions(
             "threshold": d.threshold,
             "action": d.action,
             "source": alarm_source,
+            "bridge_mode": bridge_mode,
             "is_test": is_test,
             "sensor_data_id": sensor_data_id,
         })
@@ -108,6 +111,7 @@ async def check_and_control(
     board_id: str = "A",
     allow_control: bool = True,
     alarm_source: str = "bridge",
+    bridge_mode: str = "hardware",
     is_test: bool = False,
     sensor_data_id: int | None = None,
 ):
@@ -120,12 +124,12 @@ async def check_and_control(
         "light": light,
         "soil_moisture": soil_moisture,
     }
-    values["soil_fertility"] = compute_model_values({
+    model = compute_model_values({
         "temp": temperature,
         "humi": humidity,
         "light": light,
-        "soil": soil_moisture,
-    })["soil_fertility"]
+    })
+    values["soil_fertility"] = model["soil_fertility"]
     decisions = evaluate_thresholds(values, thresholds)
     await execute_decisions(
         decisions,
@@ -135,6 +139,7 @@ async def check_and_control(
         board_id,
         allow_control=allow_control,
         alarm_source=alarm_source,
+        bridge_mode=bridge_mode,
         is_test=is_test,
         sensor_data_id=sensor_data_id,
     )
@@ -153,6 +158,7 @@ async def check_and_control(
         app_state=app_state,
         board_id=board_id,
         allow_control=allow_control,
+        is_test=is_test,
     )
 
 
@@ -162,9 +168,13 @@ async def _apply_alarm_light_state(
     board_id: str = "A",
     allow_control: bool = True,
     alarm_source: str = "bridge",
+    bridge_mode: str = "hardware",
     is_test: bool = False,
 ):
     if not allow_control or is_test or alarm_source != "bridge":
+        return
+
+    if _is_manual_suppressed(app_state, board_id, "alarm_light"):
         return
 
     next_active = bool(decisions)
@@ -200,8 +210,12 @@ async def _apply_soil_moisture_pump_rule(
     app_state=None,
     board_id: str = "A",
     allow_control: bool = True,
+    is_test: bool = False,
 ):
     if not allow_control or mode != "auto":
+        return
+
+    if _is_manual_suppressed(app_state, board_id, "pump"):
         return
 
     rule = await _get_or_create_soil_moisture_pump_rule(session)
@@ -227,7 +241,7 @@ async def _apply_soil_moisture_pump_rule(
         await session.commit()
         return
 
-    if not await _has_consecutive_low_soil_samples(session, board_id, rule):
+    if not await _has_consecutive_low_soil_samples(session, board_id, rule, is_test=is_test):
         await session.commit()
         return
 
@@ -266,10 +280,11 @@ async def _has_consecutive_low_soil_samples(
     session: AsyncSession,
     board_id: str,
     rule: ControlRule,
+    is_test: bool = False,
 ) -> bool:
     result = await session.execute(
         select(SensorData)
-        .where(SensorData.board_id == board_id)
+        .where(SensorData.board_id == board_id, SensorData.is_test.is_(is_test))
         .order_by(SensorData.timestamp.desc(), SensorData.id.desc())
         .limit(rule.consecutive_samples)
     )
@@ -452,6 +467,28 @@ def _parse_timestamp(value: str):
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+MANUAL_SUPPRESS_SECONDS = 60
+
+
+def set_manual_suppress(app_state, board_id: str, device: str):
+    if not app_state:
+        return
+    if not hasattr(app_state, "manual_until"):
+        app_state.manual_until = {}
+    board = app_state.manual_until.setdefault(board_id, {})
+    board[device] = _format_timestamp(utc_now() + timedelta(seconds=MANUAL_SUPPRESS_SECONDS))
+
+
+def _is_manual_suppressed(app_state, board_id: str, device: str) -> bool:
+    if not app_state or not hasattr(app_state, "manual_until"):
+        return False
+    until_str = app_state.manual_until.get(board_id, {}).get(device)
+    if not until_str:
+        return False
+    until = _parse_timestamp(until_str)
+    return bool(until and utc_now() < until)
 
 
 async def _broadcast_auto_status(app_state):

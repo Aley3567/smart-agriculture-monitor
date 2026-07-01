@@ -39,8 +39,14 @@ extern "C" {
 #define SAMPLEAPP_PERIODIC_CLUSTERID 1   /* 周期性传感器数据 */
 #define SAMPLEAPP_CTRL_CLUSTERID     2   /* 控制命令 */
 
+/* EndDeviceEB1.c 依赖的原版常量（我们不用，但它参与编译） */
+#define SAMPLEAPP_FLASH_CLUSTERID    3
+#define SAMPLEAPP_P2P_CLUSTERID      4
+#define SAMPLEAPP_FLASH_DURATION     1000
+#define SAMPLEAPP_FLASH_GROUP        0x0001
+
 /* 最大簇数量 */
-#define SAMPLEAPP_MAX_CLUSTERS       2
+#define SAMPLEAPP_MAX_CLUSTERS       4
 
 /* 传感器数据发送周期（毫秒） */
 #define SAMPLEAPP_SEND_PERIODIC_MSG_TIMEOUT   2000

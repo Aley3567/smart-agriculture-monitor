@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, asdict
 from typing import Any
 
@@ -50,9 +51,9 @@ SENSOR_FIELDS: dict[str, SensorField] = {
         param="soil_moisture",
         label="土壤湿度",
         unit="%",
-        source="simulated_firmware",
-        detail="固件 SampleApp_SimulateSoil；板上土壤传感器待接入",
-        category="measured",
+        source="computed_backend",
+        detail="后端模型推导：由温度、空气湿度、光照推导",
+        category="model",
         available=True,
     ),
     "co2": SensorField(
@@ -116,19 +117,31 @@ def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def _jitter(temp: float, humi: float, light: float, freq: float) -> float:
+    return math.sin((temp * 0.131 + humi * 0.257 + light * 0.413) * freq)
+
+
 def compute_model_values(values: dict[str, Any]) -> dict[str, float]:
     temp = float(values.get("temp") or 0)
     humi = float(values.get("humi") or 0)
     light = float(values.get("light") or 0)
-    soil = float(values.get("soil") or 0)
 
-    soil_ec = _clamp(0.65 + soil * 0.016 + max(temp - 25, 0) * 0.015 - max(humi - 70, 0) * 0.004, 0.3, 2.6)
+    soil_raw = 50 + (humi - 50) * 0.35 - max(temp - 20, 0) * 1.8 - light * 0.12
+    soil = _clamp(soil_raw + _jitter(temp, humi, light, 7.3) * 0.5, 15, 75)
+
+    ec_raw = 0.65 + soil * 0.016 + max(temp - 25, 0) * 0.015 - max(humi - 70, 0) * 0.004
+    soil_ec = _clamp(ec_raw + _jitter(temp, humi, light, 13.1) * 0.015, 0.3, 2.6)
+
     soil_tds = soil_ec * 640
     soil_fertility = _clamp(100 - abs(soil - 45) * 1.4 - abs(soil_ec - 1.25) * 22, 0, 100)
-    co2 = _clamp(420 + max(100 - light, 0) * 2.8 + max(temp - 25, 0) * 7 + max(humi - 70, 0) * 2, 400, 1200)
+
+    co2_raw = 420 + max(100 - light, 0) * 2.8 + max(temp - 25, 0) * 7 + max(humi - 70, 0) * 2
+    co2 = _clamp(co2_raw + _jitter(temp, humi, light, 3.7) * 8, 400, 1200)
+
     infrared = 1.0 if light < 18 else 0.0
 
     return {
+        "soil": round(soil, 1),
         "co2": round(co2, 1),
         "soil_ec": round(soil_ec, 2),
         "soil_tds": round(soil_tds, 0),

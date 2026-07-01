@@ -45,6 +45,7 @@ const tableRows = computed(() => tableData.value.map((row) => ({
   id: row.id,
   time: formatDateTimeMinute(row.timestamp),
   source: row.source || 'bridge',
+  bridgeMode: row.bridge_mode || 'unknown',
   isTest: Boolean(row.is_test),
   raw: row,
 })))
@@ -224,10 +225,17 @@ function sourceForField(key) {
   return field.available ? sourceMeta(field.source) : sourceMeta('pending')
 }
 
+function bridgeModeText(mode) {
+  if (mode === 'hardware') return '真实串口'
+  if (mode === 'mock') return '模拟数据'
+  if (mode === 'test_injection') return '测试注入'
+  return '历史未知'
+}
+
 function exportCsv() {
   const rows = chartRows.value
   if (!rows.length) return
-  const header = '时间,温度(°C),空气湿度(%),相对光照,土壤湿度(%),CO2,EC,TDS,肥力,红外,source,is_test,来源说明'
+  const header = '时间,温度(°C),空气湿度(%),相对光照,土壤湿度(%),CO2,EC,TDS,肥力,红外,source,bridge_mode,is_test,来源说明'
   const lines = rows.map(r => [
     formatDateTime(r.timestamp),
     r.temp,
@@ -240,6 +248,7 @@ function exportCsv() {
     rowValue(r, 'soil_fertility') ?? '',
     rowValue(r, 'infrared') ?? '',
     r.source || '',
+    r.bridge_mode || '',
     Boolean(r.is_test),
     'temp/humi=实测; light=GL5516/P0.7 ADC相对光照值; soil=板端模拟; co2/EC/TDS/肥力/红外=后端模型',
   ].join(','))
@@ -373,7 +382,7 @@ onUnmounted(() => {
                   {{ valueOf(row.raw, key) }}<small v-if="sensorStore.fieldFor(key).available && sensorStore.fieldFor(key).unit"> {{ sensorStore.fieldFor(key).unit }}</small>
                 </td>
                 <td class="source-note">
-                  <span>{{ row.source }} · 来源由后端字段合同返回</span>
+                  <span>{{ row.source }} · {{ bridgeModeText(row.bridgeMode) }} · 来源由后端字段合同返回</span>
                   <b v-if="row.isTest" class="injection-tag">测试注入</b>
                 </td>
               </tr>

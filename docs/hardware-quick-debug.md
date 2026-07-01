@@ -8,9 +8,9 @@
 
 | 现象 | 原因 | 解法 |
 |------|------|------|
-| `Fatal Error: Could not open file "HalOled.h"` | OLED 驱动文件缺失 | 已用条件编译处理，**不需要**在 IAR 预编译宏中加 `HAL_OLED`，直接编译即可跳过 OLED |
+| `Fatal Error: Could not open file "HalOled.h"` | HalOled.h 没加入工程 | 把 HalOled.c/HalOled.h/HalOledFont.h 加入 IAR 工程的 Source 组（源码已 `#define HAL_OLED`，不再需要手动加预编译宏） |
 | `Fatal Error: Could not open file "SampleApp.h"` | 没把 .h 文件一起替换 | SampleApp.c 和 SampleApp.h 必须成对替换 |
-| `Error: Undefined external "SampleApp_Init"` | 选错了编译配置 | 协调器选 `CoordinatorEB`，终端节点选 `EndDeviceEB`（带 CC2591 功放才用 `-Pro`） |
+| `Error: Undefined external "SampleApp_Init"` | 选了 `EndDeviceEB-1` 配置（该配置把 SampleApp.c 排除了） | 切换到 **`EndDeviceEB`**（不带 -1），重新编译 |
 | `Warning: variable declared but not used` | 正常，不影响 | 忽略，只要 0 Errors 即可 |
 | 大量 `Error` 来自 `Components/` 目录 | Z-Stack 版本不匹配 | 确认 Z-Stack 版本为 2.3.0-1.4.0 或 2.5.1a |
 

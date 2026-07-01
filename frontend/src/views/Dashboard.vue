@@ -44,6 +44,12 @@ const cardTones = {
 const hasData = computed(() => sensorStore.history.timestamps.length > 0)
 const currentBoardId = computed(() => systemStore.currentBoardId || DEFAULT_BOARD_ID)
 const isTestSample = computed(() => Boolean(sensorStore.currentMeta.is_test))
+const bridgeModeMeta = computed(() => {
+  if (sensorStore.currentMeta.bridge_mode === 'mock') return sourceMeta('bridge_mock')
+  if (sensorStore.currentMeta.bridge_mode === 'hardware') return sourceMeta('bridge_hardware')
+  if (sensorStore.currentMeta.timestamp) return sourceMeta('bridge_unknown')
+  return null
+})
 
 const measuredCards = computed(() => sensorStore.measuredFieldKeys.map((key) => {
   const field = sensorStore.fieldFor(key)
@@ -140,16 +146,12 @@ const modelChartOption = computed(() => {
   const seriesData = (key) => Array.isArray(h[key]) ? h[key] : h.timestamps.map(() => null)
   return makeLineOption({
     labels,
-    legend: ['土壤湿度(%)', 'CO2(ppm)', '土壤EC(dS/m)', '土壤TDS(ppm)', '土壤肥力(%)', '红外'],
-    colors: ['#16a34a', '#059669', '#0d9488', '#0891b2', '#65a30d', '#dc2626'],
+    legend: ['土壤湿度(%)'],
+    colors: ['#16a34a'],
     series: [
       { name: '土壤湿度(%)', data: seriesData('soil'), yAxisIndex: 0 },
-      { name: 'CO2(ppm)', data: seriesData('co2'), yAxisIndex: 1 },
-      { name: '土壤EC(dS/m)', data: seriesData('soil_ec'), yAxisIndex: 1 },
-      { name: '土壤TDS(ppm)', data: seriesData('soil_tds'), yAxisIndex: 1 },
-      { name: '土壤肥力(%)', data: seriesData('soil_fertility'), yAxisIndex: 0 },
-      { name: '红外', data: seriesData('infrared'), yAxisIndex: 0 },
     ],
+    yAxis: [{ min: 0, max: 100 }],
   })
 })
 
@@ -174,7 +176,9 @@ const weatherCards = computed(() => [
   { label: '室外辐射', value: weather.value?.radiation, unit: 'W/m²' },
 ])
 
-function makeLineOption({ labels, legend, colors, series }) {
+function makeLineOption({ labels, legend, colors, series, yAxis = [] }) {
+  const top = legend.length > 3 ? 72 : 52
+  const hasRightAxis = series.some(item => item.yAxisIndex === 1)
   return {
     animation: false,
     color: colors,
@@ -194,7 +198,7 @@ function makeLineOption({ labels, legend, colors, series }) {
       textStyle: { color: '#334155', fontSize: 12 },
       data: legend,
     },
-    grid: { top: 52, left: 44, right: 48, bottom: 34 },
+    grid: { top, left: 44, right: 48, bottom: 34 },
     xAxis: {
       type: 'category',
       boundaryGap: false,
@@ -204,8 +208,8 @@ function makeLineOption({ labels, legend, colors, series }) {
       axisLabel: { color: '#64748b', fontSize: 11, hideOverlap: true },
     },
     yAxis: [
-      { type: 'value', scale: true, axisLabel: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } } },
-      { type: 'value', scale: true, position: 'right', axisLabel: { color: '#64748b', fontSize: 11 }, splitLine: { show: false } },
+      { type: 'value', scale: true, ...yAxis[0], axisLabel: { color: '#64748b', fontSize: 11 }, splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } } },
+      { type: 'value', show: hasRightAxis, scale: true, position: 'right', ...yAxis[1], axisLabel: { color: '#64748b', fontSize: 11 }, splitLine: { show: false } },
     ],
     series: series.map((item) => ({
       ...item,
@@ -378,7 +382,11 @@ onMounted(refresh)
     <header class="page-head">
       <div>
         <h1 class="page-title">实时监测</h1>
-        <p class="page-subtitle">当前板卡 {{ currentBoardId }}<b v-if="isTestSample" class="source-badge source-test test-tag">测试注入</b></p>
+        <p class="page-subtitle">
+          当前板卡 {{ currentBoardId }}
+          <b v-if="bridgeModeMeta" class="source-badge" :class="bridgeModeMeta.className">{{ bridgeModeMeta.label }}</b>
+          <b v-if="isTestSample" class="source-badge source-test test-tag">测试数据</b>
+        </p>
       </div>
       <button class="btn btn-soft" type="button" @click="refresh">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16.2 10a6.2 6.2 0 1 1-1.8-4.4"/><path d="M16.2 4v4h-4"/></svg>
@@ -403,7 +411,7 @@ onMounted(refresh)
                   <span>{{ card.label }}</span>
                   <span class="badge-pair">
                     <b class="source-badge" :class="card.source.className">{{ card.source.label }}</b>
-                    <b class="source-badge availability">{{ card.available ? '可用' : '待接入' }}</b>
+                    <b v-if="!card.available" class="source-badge availability pending">待接入</b>
                   </span>
                 </div>
                 <div class="metric-value"><strong>{{ card.value }}</strong><small>{{ card.unit }}</small></div>
@@ -456,7 +464,7 @@ onMounted(refresh)
                   <strong>{{ card.label }}</strong>
                   <span class="badge-pair">
                     <b class="source-badge" :class="card.source.className">{{ card.source.label }}</b>
-                    <b class="source-badge availability" :class="{ pending: !card.available }">{{ card.available ? '可用' : '待接入' }}</b>
+                    <b v-if="!card.available" class="source-badge availability pending">待接入</b>
                   </span>
                 </div>
                 <div class="model-value">{{ card.value }}<small v-if="!card.muted && card.unit">{{ card.unit }}</small></div>
@@ -507,6 +515,7 @@ onMounted(refresh)
               <div>
                 <strong>{{ item.label }}</strong>
                 <small>{{ item.mode }} · {{ item.basis }}</small>
+                <small v-if="systemStore.alarmLights[systemStore.currentBoardId] && item.key !== 'pump'" class="alarm-hint">报警期间操作将在报警解除后生效</small>
               </div>
               <span class="act-state">{{ item.active ? '运行' : '关闭' }}</span>
               <button class="toggle" :class="{ active: item.active }" type="button" @click="toggleActuator(item.key)"></button>
@@ -793,12 +802,13 @@ onMounted(refresh)
 
 .metric-title {
   justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
   color: #0f172a;
   font-weight: 750;
 }
 
-.metric-title span {
+.metric-title > span:first-child {
   white-space: nowrap;
 }
 
@@ -918,7 +928,7 @@ onMounted(refresh)
 
 .model-title {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
@@ -928,9 +938,8 @@ onMounted(refresh)
   color: #0f172a;
   font-size: 13px;
   font-weight: 800;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .model-title .source-badge {
@@ -979,7 +988,7 @@ onMounted(refresh)
 
 .trend-chart {
   width: 100%;
-  height: 230px;
+  height: 260px;
 }
 
 .weather-strip {
@@ -1057,6 +1066,12 @@ onMounted(refresh)
 .actuator-list small {
   color: #64748b;
   font-size: 12px;
+}
+
+.alarm-hint {
+  color: #e67e22;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .act-state {

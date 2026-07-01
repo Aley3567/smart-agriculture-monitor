@@ -7,19 +7,11 @@ def utc_iso(value: datetime) -> str:
     return f"{value.isoformat()}Z" if value.tzinfo is None else value.isoformat()
 
 
-class SensorDataIn(BaseModel):
-    temp: float
-    humi: float
-    light: float
-    soil: float
-
-
 class TestSensorSampleIn(BaseModel):
     board_id: str
     temperature: float
     humidity: float
     light: float
-    soil_moisture: float
     allow_control: bool = False
 
 
@@ -32,6 +24,7 @@ class SensorDataOut(BaseModel):
     light: float
     soil: float
     source: str = "bridge"
+    bridge_mode: str = "hardware"
     is_test: bool = False
     facts: dict[str, dict] = Field(default_factory=dict)
 
@@ -62,6 +55,7 @@ class AlarmLogOut(BaseModel):
     param_label: str = ""
     unit: str = ""
     source: str = ""
+    bridge_mode: str = "hardware"
     is_test: bool = False
     sensor_data_id: int | None = None
     direction: str = ""

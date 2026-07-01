@@ -67,7 +67,7 @@ def parse_serial_payload(line: str, default_board_id: str, default_board_name: s
                 board_id = value.strip() or default_board_id
             elif key in FIELD_MAP:
                 data[FIELD_MAP[key]] = float(value)
-        if len(data) == 4:
+        if len(data) >= 3:
             board_name = default_board_name
             if board_id != default_board_id:
                 board_name = f"greenhouse-{board_id.lower()}"
@@ -81,11 +81,12 @@ def parse_serial_payload(line: str, default_board_id: str, default_board_name: s
     return None
 
 
-def build_sensor_message(data: dict, board_id: str, board_name: str) -> dict:
+def build_sensor_message(data: dict, board_id: str, board_name: str, bridge_mode: str = "hardware") -> dict:
     return {
         "type": "sensor_data",
         "board_id": board_id,
         "board_name": board_name,
+        "bridge_mode": bridge_mode,
         "data": data,
     }
 
@@ -126,6 +127,7 @@ async def serial_to_ws(
     loop: asyncio.AbstractEventLoop,
     board_id: str,
     board_name: str,
+    bridge_mode: str,
 ):
     while True:
         try:
@@ -151,7 +153,7 @@ async def serial_to_ws(
                 )))
                 continue
             data = payload["data"]
-            msg = json.dumps(build_sensor_message(data, payload["board_id"], payload["board_name"]))
+            msg = json.dumps(build_sensor_message(data, payload["board_id"], payload["board_name"], bridge_mode))
             await ws_send_queue.put(msg)
             await ws_send_queue.put(json.dumps(build_debug_message(
                 payload["board_id"],
@@ -215,6 +217,7 @@ async def websocket_receiver(ws, ws_recv_queue: asyncio.Queue):
 
 async def run_bridge(port: str, baud: int, server: str, mock: bool, board_id: str, board_name: str):
     loop = asyncio.get_event_loop()
+    bridge_mode = "mock" if mock else "hardware"
 
     while True:
         ser = None
@@ -242,6 +245,7 @@ async def run_bridge(port: str, baud: int, server: str, mock: bool, board_id: st
                 "type": "bridge_hello",
                 "board_id": board_id,
                 "board_name": board_name,
+                "bridge_mode": bridge_mode,
             }))
 
             ws_send_queue = asyncio.Queue()
@@ -256,7 +260,7 @@ async def run_bridge(port: str, baud: int, server: str, mock: bool, board_id: st
             )))
 
             tasks = [
-                asyncio.create_task(serial_to_ws(ser, ws_send_queue, loop, board_id, board_name)),
+                asyncio.create_task(serial_to_ws(ser, ws_send_queue, loop, board_id, board_name, bridge_mode)),
                 asyncio.create_task(ws_to_serial(ser, ws_recv_queue, ws_send_queue, loop, board_id)),
                 asyncio.create_task(websocket_sender(ws, ws_send_queue)),
                 asyncio.create_task(websocket_receiver(ws, ws_recv_queue)),

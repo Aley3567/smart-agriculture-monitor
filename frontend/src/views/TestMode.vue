@@ -19,8 +19,7 @@ const form = reactive({
   board_id: systemStore.currentBoardId || DEFAULT_BOARD_ID,
   temperature: 24,
   humidity: 60,
-  light: 600,
-  soil_moisture: 42,
+  light: 50,
 })
 
 const latestSource = computed(() => sourceMeta(sensorStore.currentMeta.source || 'system'))
@@ -30,7 +29,6 @@ const sensorCards = computed(() => [
   { key: 'temp', label: '温度', model: 'temperature', unit: '°C' },
   { key: 'humi', label: '空气湿度', model: 'humidity', unit: '%' },
   { key: 'light', label: '相对光照', model: 'light', unit: '相对值' },
-  { key: 'soil', label: '土壤湿度', model: 'soil_moisture', unit: '%' },
 ].map((item) => {
   const field = sensorStore.fieldFor(item.key)
   return {
@@ -51,7 +49,6 @@ function fillFromCurrent() {
   form.temperature = valueOrFallback(sensorStore.current.temp, form.temperature)
   form.humidity = valueOrFallback(sensorStore.current.humi, form.humidity)
   form.light = valueOrFallback(sensorStore.current.light, form.light)
-  form.soil_moisture = valueOrFallback(sensorStore.current.soil, form.soil_moisture)
 }
 
 function normalizePayload(allowControl) {
@@ -60,13 +57,12 @@ function normalizePayload(allowControl) {
     temperature: Number(form.temperature),
     humidity: Number(form.humidity),
     light: Number(form.light),
-    soil_moisture: Number(form.soil_moisture),
     allow_control: Boolean(allowControl),
   }
 }
 
 function isPayloadValid(payload) {
-  return ['temperature', 'humidity', 'light', 'soil_moisture'].every(key => Number.isFinite(payload[key]))
+  return ['temperature', 'humidity', 'light'].every(key => Number.isFinite(payload[key]))
 }
 
 async function fetchLatestSample() {
@@ -169,7 +165,7 @@ onMounted(fetchLatestSample)
       <section class="card form-panel">
         <div class="panel-head">
           <h2 class="section-title">样本值</h2>
-          <span>提交字段：temperature / humidity / light / soil_moisture</span>
+          <span>提交字段：temperature / humidity / light（soil 由模型计算）</span>
         </div>
 
         <div class="sample-grid">

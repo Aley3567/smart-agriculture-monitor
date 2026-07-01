@@ -18,6 +18,7 @@ class SensorData(Base):
     light: Mapped[float] = mapped_column(Float)
     soil: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(Text, default="bridge", server_default="bridge")
+    bridge_mode: Mapped[str] = mapped_column(Text, default="hardware", server_default="hardware")
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
 
 
@@ -41,6 +42,7 @@ class AlarmLog(Base):
     threshold: Mapped[float] = mapped_column(Float)
     action: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(Text, default="bridge", server_default="bridge")
+    bridge_mode: Mapped[str] = mapped_column(Text, default="hardware", server_default="hardware")
     is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     sensor_data_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
