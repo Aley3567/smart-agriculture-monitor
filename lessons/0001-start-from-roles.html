@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 1 课：先认清系统里的角色</title>
+  <style>
+    :root{--bg:#f7f5ef;--paper:#fffdf7;--ink:#20231f;--muted:#647064;--line:#d8d1c0;--green:#2e6b4d;--blue:#2d5f84;--soft:#e8efe7}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7}
+    main{max-width:980px;margin:auto;padding:32px 20px 56px}header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:26px}
+    h1{font-size:32px;line-height:1.15;margin:0 0 10px;letter-spacing:0}h2{font-size:23px;margin:32px 0 14px;letter-spacing:0}h3{margin:0 0 8px;font-size:18px}
+    p{margin:0 0 12px}.lead{font-size:18px;color:var(--muted);max-width:760px}code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px}
+    .nav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.nav a{color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--paper);padding:7px 10px;border-radius:6px}
+    .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.card{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:16px}.wide{grid-column:1/-1}
+    .role{display:grid;grid-template-columns:130px 1fr;gap:10px;align-items:start;border-bottom:1px solid var(--line);padding:12px 0}.role:last-child{border-bottom:0}.role strong{color:var(--green)}
+    .diagram{display:flex;gap:8px;align-items:stretch;overflow:auto;padding:4px 0}.box{min-width:122px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center}.arrow{align-self:center;color:var(--muted);font-weight:700}
+    button{font:inherit;border:1px solid var(--ink);background:#fff;border-radius:6px;padding:8px 12px;cursor:pointer}.quiz button{margin:4px}.answer{font-weight:700;min-height:30px;margin-top:8px}
+    .evidence{font-size:13px;color:var(--muted)}@media(max-width:760px){.grid{grid-template-columns:1fr}.role{grid-template-columns:1fr}.diagram{display:grid}.arrow{display:none}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>第 1 课：先认清系统里的角色</h1>
+    <p class="lead">小白不要先背技术名词。先把系统想成一条“从地里采数据，到网页显示，再回去控制设备”的流水线。</p>
+    <nav class="nav">
+      <a href="./0001-start-from-roles.html">1 角色</a>
+      <a href="./0002-hardware-and-truth.html">2 硬件</a>
+      <a href="./0003-data-goes-up.html">3 上行</a>
+      <a href="./0004-control-goes-down.html">4 下行</a>
+      <a href="./0005-experiments-to-defense.html">5 实验</a>
+      <a href="../reference/0001-defense-glossary.html">术语表</a>
+    </nav>
+  </header>
+
+  <section class="card">
+    <h2>你先记住一句话</h2>
+    <p><strong>终端板采集数据，协调器把无线数据转成串口，Python bridge 把串口转成网络消息，FastAPI 后端存库和判断，Vue 前端展示和发控制。</strong></p>
+    <p>这句话就是答辩的骨架。后面所有细节都挂在这条骨架上。</p>
+  </section>
+
+  <section>
+    <h2>完整角色链路</h2>
+    <div class="diagram" aria-label="系统链路">
+      <div class="box">终端 CC2530<br><small>采集/执行</small></div><div class="arrow">→</div>
+      <div class="box">ZigBee<br><small>无线传输</small></div><div class="arrow">→</div>
+      <div class="box">协调器<br><small>无线转串口</small></div><div class="arrow">→</div>
+      <div class="box">Python bridge<br><small>串口转 WS</small></div><div class="arrow">→</div>
+      <div class="box">FastAPI<br><small>存库/判断</small></div><div class="arrow">→</div>
+      <div class="box">Vue 前端<br><small>展示/操作</small></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card wide">
+      <h2>每个角色到底干什么</h2>
+      <div class="role"><strong>终端 CC2530</strong><span>在大棚现场，读取 DHT11 温湿度，并接收命令控制继电器/LED。它是“干活的板”。</span></div>
+      <div class="role"><strong>协调器 CC2530</strong><span>不负责展示页面，也不负责数据库。它只把 ZigBee 无线数据转成 UART 串口数据，是“中转站”。</span></div>
+      <div class="role"><strong>Python bridge</strong><span>PC 上跑的小程序。它读串口，把 <code>t:25-h:60</code> 这种硬件字符串翻译成 WebSocket JSON。</span></div>
+      <div class="role"><strong>FastAPI 后端</strong><span>系统大脑。数据入库、阈值判断、报警记录、自动控制命令都在这里完成。</span></div>
+      <div class="role"><strong>Vue 前端</strong><span>用户看的页面。显示实时数据、历史曲线、报警日志，也提供手动控制按钮。</span></div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>新手最容易混的点</h2>
+      <p>不要把 ZigBee、串口、WebSocket 当成同一个东西。它们是不同路段：</p>
+      <p><code>ZigBee</code> 是两块 CC2530 之间的无线；<code>UART</code> 是协调器到 PC；<code>WebSocket</code> 是 PC/后端/前端之间的网络实时通信。</p>
+    </div>
+    <div class="card quiz">
+      <h2>小测</h2>
+      <p>谁负责把串口数据转成 WebSocket 消息？</p>
+      <button data-ok="0">协调器</button>
+      <button data-ok="1">Python bridge</button>
+      <button data-ok="0">Vue 前端</button>
+      <div class="answer"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>继续学什么</h2>
+    <p>下一课先看硬件，不看代码。你要先知道哪块板负责采集、哪些数据是真实、哪些数据现在还是模拟。</p>
+    <p><a href="./0002-hardware-and-truth.html">进入第 2 课：硬件和真实口径</a></p>
+    <p class="evidence">主要证据：<code>CLAUDE.md:5-17</code>、<code>PRD.md:11-31</code>、<code>firmware/README.md:5-9</code>。</p>
+  </section>
+</main>
+<script>
+document.querySelectorAll(".quiz button").forEach((btn)=>btn.addEventListener("click",()=>{const a=btn.parentElement.querySelector(".answer");const ok=btn.dataset.ok==="1";a.textContent=ok?"对：bridge 是串口世界和网络世界之间的翻译员。":"不对：再看角色链路，串口到 WebSocket 的翻译在 PC 上的 Python bridge。";a.style.color=ok?"#2e6b4d":"#9b3d30";}));
+</script>
+</body>
+</html>

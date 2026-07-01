@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智慧农业答辩术语表</title>
+  <style>
+    :root{--bg:#f7f5ef;--paper:#fffdf7;--ink:#20231f;--muted:#647064;--line:#d8d1c0;--green:#2e6b4d}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7}
+    main{max-width:980px;margin:auto;padding:32px 20px 56px}header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:26px}
+    h1{font-size:32px;margin:0 0 10px;letter-spacing:0}.lead{font-size:18px;color:var(--muted)}code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px}
+    .nav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.nav a{color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--paper);padding:7px 10px;border-radius:6px}
+    dl{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 18px}dt{font-weight:800;color:var(--green);margin-top:14px}dd{margin:4px 0 12px 0;color:#30352f}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>智慧农业答辩术语表</h1>
+    <p class="lead">复习时先查这里。每个词只保留答辩够用的解释。</p>
+    <nav class="nav">
+      <a href="../lessons/0001-start-from-roles.html">1 角色</a>
+      <a href="../lessons/0002-hardware-and-truth.html">2 硬件</a>
+      <a href="../lessons/0003-data-goes-up.html">3 上行</a>
+      <a href="../lessons/0004-control-goes-down.html">4 下行</a>
+      <a href="../lessons/0005-experiments-to-defense.html">5 实验</a>
+    </nav>
+  </header>
+  <dl>
+    <dt>CC2530</dt><dd>带 8051 内核和 2.4GHz 无线能力的芯片。项目里两块板都用它，一块做终端节点，一块做协调器。</dd>
+    <dt>终端节点</dt><dd>现场采集和执行控制的板。它读 DHT11，生成数据，接收命令后控制继电器/LED。</dd>
+    <dt>协调器</dt><dd>ZigBee 网络里的汇聚角色。项目里它把终端的 ZigBee 数据转成 UART 串口输出，也把串口命令转回 ZigBee。</dd>
+    <dt>ZigBee</dt><dd>两块 CC2530 之间的无线通信，不是互联网，也不是前端 WebSocket。</dd>
+    <dt>UART / 串口</dt><dd>协调器和 PC 之间的有线通信。项目串口参数是 115200 / 8N1。</dd>
+    <dt>Python bridge</dt><dd>跑在本地 PC 上的翻译层。它把串口字符串解析成 WebSocket JSON，也把后端控制命令写回串口。</dd>
+    <dt>WebSocket</dt><dd>网络实时通信方式。项目用它连接 bridge 和 FastAPI，也用它把实时数据推给前端。</dd>
+    <dt>FastAPI</dt><dd>后端框架。项目用它接收数据、存 SQLite、判断阈值、记录报警和控制日志。</dd>
+    <dt>SQLite</dt><dd>项目当前数据库，用于保存传感器历史数据、阈值、报警和控制日志。</dd>
+    <dt>DHT11</dt><dd>温湿度传感器。当前温度和空气湿度是真实采集，接 P2.0。</dd>
+    <dt><code>t/h/l/s</code></dt><dd>串口协议短字段，分别对应温度、湿度、光照、土壤湿度。</dd>
+    <dt><code>BLEGLED*</code> / <code>BLEKLED*</code></dt><dd>硬件控制命令字。后端会把语义动作如 pump on 映射成这类命令。</dd>
+    <dt>自动控制</dt><dd>后端根据阈值自动生成命令。只有系统处于 <code>auto</code> 模式才会自动下发。</dd>
+    <dt>答辩边界</dt><dd>不能夸大当前实现：光照和土壤湿度当前是固件模拟；项目是融合改造版，不是直接烧实验原版固件。</dd>
+  </dl>
+</main>
+</body>
+</html>

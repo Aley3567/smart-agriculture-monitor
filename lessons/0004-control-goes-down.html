@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 4 课：控制怎样下行</title>
+  <style>
+    :root{--bg:#f7f5ef;--paper:#fffdf7;--ink:#20231f;--muted:#647064;--line:#d8d1c0;--green:#2e6b4d;--blue:#2d5f84;--red:#9b3d30}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7}
+    main{max-width:980px;margin:auto;padding:32px 20px 56px}header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:26px}
+    h1{font-size:32px;line-height:1.15;margin:0 0 10px;letter-spacing:0}h2{font-size:23px;margin:32px 0 14px;letter-spacing:0}h3{margin:0 0 8px;font-size:18px}
+    p{margin:0 0 12px}.lead{font-size:18px;color:var(--muted);max-width:780px}code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px}
+    .nav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.nav a{color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--paper);padding:7px 10px;border-radius:6px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.card{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:16px}.wide{grid-column:1/-1}
+    .chain{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.chain div{background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center}
+    table{width:100%;border-collapse:collapse;background:var(--paper);border:1px solid var(--line)}th,td{border-bottom:1px solid var(--line);padding:10px;text-align:left}th{background:#ebe6d8}
+    button{font:inherit;border:1px solid var(--ink);background:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;margin:4px}.answer{font-weight:700;min-height:30px;margin-top:8px}.evidence{font-size:13px;color:var(--muted)}
+    @media(max-width:760px){.grid,.chain{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>第 4 课：控制怎样下行</h1>
+    <p class="lead">“下行”就是命令从前端或后端出发，沿着网络、串口、ZigBee 回到终端板，让继电器或 LED 变化。</p>
+    <nav class="nav">
+      <a href="./0001-start-from-roles.html">1 角色</a>
+      <a href="./0002-hardware-and-truth.html">2 硬件</a>
+      <a href="./0003-data-goes-up.html">3 上行</a>
+      <a href="./0004-control-goes-down.html">4 下行</a>
+      <a href="./0005-experiments-to-defense.html">5 实验</a>
+      <a href="../reference/0001-defense-glossary.html">术语表</a>
+    </nav>
+  </header>
+
+  <section class="card">
+    <h2>先看一个具体例子：开水泵</h2>
+    <div class="chain">
+      <div>前端按钮<br><code>pump on</code></div>
+      <div>后端映射<br><code>BLEGLED1</code></div>
+      <div>bridge 写串口<br><code>BLEGLED1\r\n</code></div>
+      <div>协调器转 ZigBee<br>控制簇</div>
+      <div>终端执行<br>P0.6 继电器</div>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>手动控制</h2>
+      <p>用户在前端点按钮，调用 <code>POST /api/control</code>。后端查命令映射后，把控制 JSON 发给 bridge。</p>
+    </div>
+    <div class="card">
+      <h2>自动控制</h2>
+      <p>传感器数据入库后，后端按阈值判断。只有系统处于 <code>auto</code> 模式，才会自动发硬件命令。</p>
+    </div>
+    <div class="card">
+      <h2>控制日志</h2>
+      <p>后端会记录 <code>ControlLog</code>，区分 <code>manual</code> 和 <code>auto</code>，答辩可讲“可追溯”。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>命令映射表</h2>
+    <table>
+      <thead><tr><th>语义动作</th><th>硬件命令</th><th>终端效果</th></tr></thead>
+      <tbody>
+        <tr><td>水泵开</td><td><code>BLEGLED1</code></td><td>P0.6 继电器吸合，P1.0 指示灯亮。</td></tr>
+        <tr><td>水泵关</td><td><code>BLEKLED1</code></td><td>P0.6 继电器断开，P1.0 指示灯灭。</td></tr>
+        <tr><td>施肥开/关</td><td><code>BLEGLED2</code> / <code>BLEKLED2</code></td><td>P1.1 LED 变化。</td></tr>
+        <tr><td>天窗开/关</td><td><code>BLEGLED3</code> / <code>BLEKLED3</code></td><td>P1.6 LED 变化。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>为什么自动控制放后端</h2>
+    <p>如果自动控制放前端，用户关掉网页就不能自动判断了。放在后端后，前端只是显示和操作入口；真正的阈值、报警、控制日志都在服务端统一管理。</p>
+  </section>
+
+  <section class="card">
+    <h2>小测</h2>
+    <p><code>temperature</code> 低于最小阈值，且模式是 <code>auto</code>，后端最后发哪条命令？</p>
+    <button data-ok="1">BLEGLED1</button>
+    <button data-ok="0">BLEKLED1</button>
+    <button data-ok="0">BLEGLED2</button>
+    <div class="answer"></div>
+  </section>
+
+  <section>
+    <h2>继续学什么</h2>
+    <p>最后一课讲实验来源。你要能说清楚哪些实验是核心基础，哪些只是工具或扩展资料。</p>
+    <p><a href="./0005-experiments-to-defense.html">进入第 5 课：实验来源与答辩边界</a></p>
+    <p class="evidence">主要证据：<code>backend/config.py:20-31</code>、<code>backend/control.py:23-90</code>、<code>backend/main.py:402-499</code>、<code>firmware/end_device/SampleApp.c:568-635</code>。</p>
+  </section>
+</main>
+<script>
+document.querySelectorAll("button").forEach((btn)=>btn.addEventListener("click",()=>{const a=document.querySelector(".answer");const ok=btn.dataset.ok==="1";a.textContent=ok?"对：temperature -> pump，低于最小阈值触发 pump_on，也就是 BLEGLED1。":"不对：先找 temperature 对应设备，再找 on 对应命令。";a.style.color=ok?"#2e6b4d":"#9b3d30";}));
+</script>
+</body>
+</html>

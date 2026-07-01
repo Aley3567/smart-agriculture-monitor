@@ -31,7 +31,7 @@
 
 | 层级 | 当前状态 | 缺口 |
 |------|----------|------|
-| 固件上行 | 发送 `t:25-h:60-l:800-s:45` | 数据里没有板子编号 |
+| 固件上行 | 发送 `t:25-h:60-l:50-s:45` | 数据里没有板子编号 |
 | `serial_bridge` | 解析 4 个传感器字段后推给后端 | 没有 `board_id` |
 | 后端 `sensor_data` | 只存 temp/humi/light/soil | 不能按板子查历史 |
 | 后端 `control_log` | 只存 device/action/source | 不能知道控制的是哪块板 |
@@ -44,7 +44,7 @@
 固件仍然发送：
 
 ```text
-t:25-h:60-l:800-s:45
+t:25-h:60-l:50-s:45
 ```
 
 每个 `serial_bridge` 启动时指定板子编号：
@@ -63,7 +63,7 @@ bridge 推送给后端：
   "data": {
     "temp": 25.0,
     "humi": 60.0,
-    "light": 800.0,
+    "light": 50.0,
     "soil": 45.0
   }
 }
@@ -84,7 +84,7 @@ bridge 推送给后端：
 终端节点直接发送：
 
 ```text
-id:A-t:25-h:60-l:800-s:45
+id:A-t:25-h:60-l:50-s:45
 ```
 
 bridge 解析后推给后端：
@@ -96,7 +96,7 @@ bridge 解析后推给后端：
   "data": {
     "temp": 25.0,
     "humi": 60.0,
-    "light": 800.0,
+    "light": 50.0,
     "soil": 45.0
   }
 }
@@ -170,7 +170,7 @@ bridge 解析后推给后端：
       "actuators": {
         "pump": false,
         "fertilizer": false,
-        "skylight": true
+        "pest_light": true
       }
     },
     "B": {
@@ -180,7 +180,7 @@ bridge 解析后推给后端：
       "actuators": {
         "pump": false,
         "fertilizer": false,
-        "skylight": false
+        "pest_light": false
       }
     }
   }
@@ -233,7 +233,7 @@ python bridge.py --port COM3 --baud 115200 --board-id A --board-name greenhouse-
 4. 串口看到传感器数据后，检查 bridge 日志：
 
 ```text
-sensor >> board=A {'temp': 25.0, 'humi': 60.0, 'light': 800.0, 'soil': 45.0}
+sensor >> board=A {'temp': 25.0, 'humi': 60.0, 'light': 50.0, 'soil': 45.0}
 ```
 
 5. 访问腾讯云后端：

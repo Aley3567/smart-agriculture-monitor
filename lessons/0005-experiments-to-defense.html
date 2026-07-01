@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>第 5 课：实验来源与答辩边界</title>
+  <style>
+    :root{--bg:#f7f5ef;--paper:#fffdf7;--ink:#20231f;--muted:#647064;--line:#d8d1c0;--green:#2e6b4d;--amber:#9a6a12;--red:#9b3d30}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7}
+    main{max-width:1000px;margin:auto;padding:32px 20px 56px}header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:26px}
+    h1{font-size:32px;line-height:1.15;margin:0 0 10px;letter-spacing:0}h2{font-size:23px;margin:32px 0 14px;letter-spacing:0}h3{margin:0 0 8px;font-size:18px}
+    p{margin:0 0 12px}.lead{font-size:18px;color:var(--muted);max-width:800px}code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px}
+    .nav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.nav a{color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--paper);padding:7px 10px;border-radius:6px}
+    table{width:100%;border-collapse:collapse;background:var(--paper);border:1px solid var(--line)}th,td{border-bottom:1px solid var(--line);padding:10px;text-align:left;vertical-align:top}th{background:#ebe6d8}
+    .card{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:16px;margin:14px 0}.quote{border-left:4px solid var(--green);background:#e8efe7;padding:12px 14px;border-radius:0 8px 8px 0}
+    .do{color:var(--green);font-weight:700}.care{color:var(--amber);font-weight:700}.no{color:var(--red);font-weight:700}
+    button{font:inherit;border:1px solid var(--ink);background:#fff;border-radius:6px;padding:8px 12px;cursor:pointer;margin:4px}.answer{font-weight:700;min-height:30px;margin-top:8px}.evidence{font-size:13px;color:var(--muted)}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>第 5 课：实验来源与答辩边界</h1>
+    <p class="lead">答辩不是背“用了哪些实验”，而是说清楚：每个实验给了当前项目哪一块基础，以及哪些地方是我们改造升级的。</p>
+    <nav class="nav">
+      <a href="./0001-start-from-roles.html">1 角色</a>
+      <a href="./0002-hardware-and-truth.html">2 硬件</a>
+      <a href="./0003-data-goes-up.html">3 上行</a>
+      <a href="./0004-control-goes-down.html">4 下行</a>
+      <a href="./0005-experiments-to-defense.html">5 实验</a>
+      <a href="../reference/0001-defense-glossary.html">术语表</a>
+    </nav>
+  </header>
+
+  <section>
+    <h2>核心来源表</h2>
+    <table>
+      <thead><tr><th>实验/资料</th><th>给当前项目什么基础</th><th>答辩边界</th></tr></thead>
+      <tbody>
+        <tr><td>实验 7：DHT11 + ZigBee 上行</td><td>DHT11 采集、P2.0 单总线、ZigBee 周期发送、OSAL 事件框架。</td><td><span class="care">项目改了格式和波特率。</span> 不要说原版固件直接可烧。</td></tr>
+        <tr><td>实验 9：BLEGLED 控制</td><td>命令字 <code>BLEGLED*</code>/<code>BLEKLED*</code>，以及 <code>strstr</code> 解析命令控制 GPIO 的思路。</td><td><span class="care">链路变了。</span> 原来偏蓝牙/UART，现在是后端到 ZigBee 下行。</td></tr>
+        <tr><td>实验 8：SerialApp 透传</td><td>串口和无线之间互相转发的概念，帮助理解协调器和 bridge。</td><td><span class="no">未采用 ACK/重发机制。</span> 当前是简单 UART 回调转发。</td></tr>
+        <tr><td>实验 6：点播通信</td><td>终端点播到协调器 <code>0x0000</code> 的通信基础。</td><td>更多是概念基础，不是完整代码照搬。</td></tr>
+        <tr><td>实验 10：原理图</td><td>确认 DHT11、继电器、LED、UART、光敏电阻引脚和电平极性。</td><td>原理图能说明硬件接法，不能证明未完成的 ADC 已采集。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>工具和扩展资料怎么讲</h2>
+    <p><span class="do">可以讲：</span> IAR、Z-Stack、SmartRF、串口助手、CH341 驱动是开发、烧录、调试环境。</p>
+    <p><span class="care">谨慎讲：</span> 手机 APP、上位机源码是旧式远程控制/Socket 调试思路，当前项目已经升级成 Vue + FastAPI + WebSocket。</p>
+    <p><span class="no">不要讲：</span> ESP8266、Android APP、OLED 例程是当前系统运行主链路。它们不是。</p>
+  </section>
+
+  <section class="card">
+    <h2>最稳答辩讲法</h2>
+    <p class="quote">我们的项目不是直接照搬某一个实验，而是把多个实验的基础做了融合。底层沿用 CC2530、Z-Stack、DHT11、点播通信和串口透传思想；控制命令继承了 <code>BLEGLED</code> 这类命令格式；然后我们在 PC 和云端增加了 Python bridge、FastAPI、SQLite、WebSocket 和 Vue 前端，形成完整的数据采集、展示、报警和控制闭环。</p>
+  </section>
+
+  <section class="card">
+    <h2>小测</h2>
+    <p>哪句话最适合答辩？</p>
+    <button data-ok="0">我们直接烧了实验 7 原版固件。</button>
+    <button data-ok="1">我们基于实验 7/9 等基础做了融合改造。</button>
+    <button data-ok="0">Android APP 是当前系统前端。</button>
+    <div class="answer"></div>
+  </section>
+
+  <section>
+    <h2>复习顺序</h2>
+    <p>如果还不熟，按这个顺序重看：角色 → 硬件真假 → 数据上行 → 控制下行 → 实验来源。每次只讲一个主题，讲完再让同伴追问。</p>
+    <p><a href="./0001-start-from-roles.html">回到第 1 课重新开始</a></p>
+    <p class="evidence">主要证据：<code>docs/hardware-interface-alignment.md:10-19</code>、<code>docs/hardware-interface-alignment.md:47-59</code>、<code>backend/config.py:20-31</code>、<code>/Users/admin/Downloads/实验课/</code>。</p>
+  </section>
+</main>
+<script>
+document.querySelectorAll("button").forEach((btn)=>btn.addEventListener("click",()=>{const a=document.querySelector(".answer");const ok=btn.dataset.ok==="1";a.textContent=ok?"对：融合改造是最准确、最安全的说法。":"不对：这句话容易夸大或说错当前项目来源。";a.style.color=ok?"#2e6b4d":"#9b3d30";}));
+</script>
+</body>
+</html>
