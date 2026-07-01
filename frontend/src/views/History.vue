@@ -73,13 +73,6 @@ const kpis = computed(() => [
   { label: '异常次数', value: summary.value.last_24h || 0, suffix: '次', tone: 'red', source: '近 24 小时' },
 ])
 
-const qualityItems = computed(() => [
-  { label: '最新同步', value: latest.value ? formatDateTimeMinute(latest.value.timestamp) : '—' },
-  { label: '缺失字段（近24小时）', value: `${sensorStore.modelFieldKeys.filter(key => !sensorStore.fieldFor(key)?.available).length} 个模型字段` },
-  { label: '字段来源', value: '由后端 sensor-fields 合同返回' },
-  { label: '历史曲线', value: '按来源分组，避免混合解读' },
-])
-
 const rangeText = computed(() => {
   const preset = RANGE_PRESETS[rangeKey.value]
   if (preset) {
@@ -225,17 +218,10 @@ function sourceForField(key) {
   return field.available ? sourceMeta(field.source) : sourceMeta('pending')
 }
 
-function bridgeModeText(mode) {
-  if (mode === 'hardware') return '真实串口'
-  if (mode === 'mock') return '模拟数据'
-  if (mode === 'test_injection') return '测试注入'
-  return '历史未知'
-}
-
 function exportCsv() {
   const rows = chartRows.value
   if (!rows.length) return
-  const header = '时间,温度(°C),空气湿度(%),相对光照,土壤湿度(%),CO2,EC,TDS,肥力,红外,source,bridge_mode,is_test,来源说明'
+  const header = '时间,温度(°C),空气湿度(%),相对光照,土壤湿度(%),CO2,EC,TDS,肥力,红外'
   const lines = rows.map(r => [
     formatDateTime(r.timestamp),
     r.temp,
@@ -247,10 +233,6 @@ function exportCsv() {
     rowValue(r, 'soil_tds') ?? '',
     rowValue(r, 'soil_fertility') ?? '',
     rowValue(r, 'infrared') ?? '',
-    r.source || '',
-    r.bridge_mode || '',
-    Boolean(r.is_test),
-    'temp/humi=实测; light=GL5516/P0.7 ADC相对光照值; soil=板端模拟; co2/EC/TDS/肥力/红外=后端模型',
   ].join(','))
   const csv = '﻿' + [header, ...lines].join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
@@ -346,18 +328,6 @@ onUnmounted(() => {
         </section>
       </main>
 
-      <aside class="card quality-panel">
-        <div class="panel-head tight">
-          <h2 class="section-title">数据质量</h2>
-        </div>
-        <div class="quality-list">
-          <article v-for="item in qualityItems" :key="item.label">
-            <span>{{ item.label }}</span>
-            <strong>{{ item.value }}</strong>
-          </article>
-        </div>
-      </aside>
-
       <section class="card table-panel">
         <h2 class="section-title">数据记录</h2>
         <div class="table-scroll">
@@ -369,21 +339,16 @@ onUnmounted(() => {
                   {{ sensorStore.fieldFor(key).label }}
                   <b class="source-badge" :class="sourceForField(key).className">{{ sourceForField(key).label }}</b>
                 </th>
-                <th>来源说明</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!tableRows.length">
-                <td :colspan="3 + allFieldKeys.length" class="empty-cell">该时间范围内暂无采样记录</td>
+                <td :colspan="1 + allFieldKeys.length" class="empty-cell">该时间范围内暂无采样记录</td>
               </tr>
               <tr v-for="row in tableRows" :key="row.id">
                 <td>{{ row.time }}</td>
                 <td v-for="key in allFieldKeys" :key="key" class="col-number">
                   {{ valueOf(row.raw, key) }}<small v-if="sensorStore.fieldFor(key).available && sensorStore.fieldFor(key).unit"> {{ sensorStore.fieldFor(key).unit }}</small>
-                </td>
-                <td class="source-note">
-                  <span>{{ row.source }} · {{ bridgeModeText(row.bridgeMode) }} · 来源由后端字段合同返回</span>
-                  <b v-if="row.isTest" class="injection-tag">测试注入</b>
                 </td>
               </tr>
             </tbody>
@@ -527,7 +492,7 @@ onUnmounted(() => {
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
@@ -539,7 +504,6 @@ onUnmounted(() => {
 }
 
 .chart-panel,
-.quality-panel,
 .table-panel {
   padding: 18px;
   min-width: 0;
@@ -556,37 +520,9 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.panel-head.tight {
-  justify-content: flex-start;
-}
-
 .chart {
   width: 100%;
   height: 330px;
-}
-
-.quality-list {
-  display: grid;
-  gap: 12px;
-}
-
-.quality-list article {
-  display: grid;
-  gap: 6px;
-  min-height: 70px;
-  padding: 14px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-}
-
-.quality-list span {
-  color: #64748b;
-  font-weight: 650;
-}
-
-.quality-list strong {
-  color: #17223b;
-  font-size: 15px;
 }
 
 .table-panel {
@@ -607,16 +543,6 @@ onUnmounted(() => {
 
 .data-table small {
   color: #64748b;
-}
-
-.source-note {
-  color: #64748b;
-  font-size: 12px;
-}
-
-.source-note span,
-.injection-tag {
-  vertical-align: middle;
 }
 
 .injection-tag {

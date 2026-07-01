@@ -27,8 +27,6 @@ const navItems = [
   { path: '/dashboard', label: '实时监测', icon: 'home' },
   { path: '/history', label: '历史分析', icon: 'chart' },
   { path: '/control', label: '控制与阈值', icon: 'sliders' },
-  { path: '/test-mode', label: '测试模式', icon: 'test' },
-  { path: '/models', label: '模型管理', icon: 'cube' },
   { path: '/weather', label: '环境气象', icon: 'cloud' },
   { path: '/alarm-log', label: '告警日志', icon: 'alert' },
 ]
