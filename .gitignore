@@ -1,4 +1,13 @@
 **/__pycache__/
 *.db
+*.pyc
+*.pyo
 frontend/output/
+node_modules/
 .env
+
+# macOS
+.DS_Store
+
+# 归档 UI 设计稿大图不入库（归档的 .md 文本仍保留）
+docs/archive/**/images/
