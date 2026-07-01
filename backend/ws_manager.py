@@ -5,14 +5,31 @@ from fastapi import WebSocket
 class WSManager:
     def __init__(self):
         self.bridge_ws: WebSocket | None = None
+        self.bridge_clients: dict[str, WebSocket] = {}
         self.data_clients: list[WebSocket] = []
 
-    async def connect_bridge(self, ws: WebSocket):
+    async def connect_bridge(self, ws: WebSocket, board_id: str = "A"):
         await ws.accept()
-        self.bridge_ws = ws
+        self.register_bridge(board_id, ws)
 
-    def disconnect_bridge(self):
-        self.bridge_ws = None
+    def register_bridge(self, board_id: str, ws: WebSocket):
+        for existing_id, bridge in list(self.bridge_clients.items()):
+            if bridge is ws and existing_id != board_id:
+                del self.bridge_clients[existing_id]
+        self.bridge_ws = ws
+        self.bridge_clients[board_id] = ws
+
+    def disconnect_bridge(self, ws: WebSocket | None = None):
+        if ws is None or self.bridge_ws is ws:
+            self.bridge_ws = None
+        for board_id, bridge in list(self.bridge_clients.items()):
+            if ws is None or bridge is ws:
+                del self.bridge_clients[board_id]
+
+    def has_bridge(self, board_id: str | None = None) -> bool:
+        if board_id:
+            return board_id in self.bridge_clients
+        return self.bridge_ws is not None
 
     async def connect_client(self, ws: WebSocket):
         await ws.accept()
@@ -33,11 +50,15 @@ class WSManager:
             self.disconnect_client(client)
 
     async def send_to_bridge(self, data: dict):
-        if self.bridge_ws:
+        target = data.get("board_id")
+        bridge = self.bridge_clients.get(target) if target else self.bridge_ws
+        if bridge is None and not target:
+            bridge = self.bridge_ws
+        if bridge:
             try:
-                await self.bridge_ws.send_json(data)
+                await bridge.send_json(data)
             except Exception:
-                self.bridge_ws = None
+                self.disconnect_bridge(bridge)
 
 
 manager = WSManager()
