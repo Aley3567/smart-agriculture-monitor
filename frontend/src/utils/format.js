@@ -1,23 +1,73 @@
+const HAS_TIMEZONE = /(?:Z|[+-]\d{2}:?\d{2})$/i
+const DATE_TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
+
+const DATE_TIME_MINUTE_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const SHORT_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  month: 'numeric',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
+
+function normalizeFormatted(value) {
+  return value.replace(/\//g, '-').replace(/,\s*/, ' ')
+}
+
+export function parseTimestamp(ts) {
+  if (!ts) return null
+  if (ts instanceof Date) return ts
+  if (typeof ts !== 'string') return new Date(ts)
+
+  const normalized = ts.includes('T') && !HAS_TIMEZONE.test(ts)
+    ? `${ts}Z`
+    : ts
+  return new Date(normalized)
+}
+
 export function formatDateTime(ts) {
   if (!ts) return ''
-  const d = new Date(ts)
-  const Y = d.getFullYear()
-  const M = String(d.getMonth() + 1).padStart(2, '0')
-  const D = String(d.getDate()).padStart(2, '0')
-  const h = String(d.getHours()).padStart(2, '0')
-  const m = String(d.getMinutes()).padStart(2, '0')
-  const s = String(d.getSeconds()).padStart(2, '0')
-  return `${Y}-${M}-${D} ${h}:${m}:${s}`
+  return normalizeFormatted(DATE_TIME_FORMAT.format(parseTimestamp(ts)))
+}
+
+export function formatDateTimeMinute(ts) {
+  if (!ts) return ''
+  return normalizeFormatted(DATE_TIME_MINUTE_FORMAT.format(parseTimestamp(ts)))
 }
 
 export function formatShortDate(ts) {
   if (!ts) return ''
-  const d = new Date(ts)
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return SHORT_FORMAT.format(parseTimestamp(ts)).replace(/\//g, '/').replace(/,\s*/, ' ')
 }
 
 export function formatTimeOnly(ts) {
   if (!ts) return ''
-  const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+  return TIME_FORMAT.format(parseTimestamp(ts))
 }

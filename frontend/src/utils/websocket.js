@@ -33,7 +33,7 @@ export function connectWebSocket() {
     const systemStore = useSystemStore()
 
     if (msg.type === 'sensor_data') {
-      sensorStore.updateSensorData(msg.data, msg.timestamp)
+      sensorStore.updateSensorData(msg.data, msg.timestamp, msg.facts, msg.fields, msg)
     } else if (msg.type === 'alarm') {
       sensorStore.addAlarm(msg)
       showToast({
@@ -43,6 +43,8 @@ export function connectWebSocket() {
       })
     } else if (msg.type === 'status') {
       systemStore.updateStatus(msg)
+    } else if (msg.type === 'bridge_debug') {
+      systemStore.addDebugEvent(msg)
     }
   }
 

@@ -9,6 +9,8 @@ const authStore = useAuthStore()
 
 const username = ref('')
 const password = ref('')
+const remember = ref(true)
+const showPassword = ref(false)
 const error = ref('')
 const loading = ref(false)
 
@@ -16,7 +18,7 @@ async function submitLogin() {
   error.value = ''
   loading.value = true
   try {
-    await authStore.login({ username: username.value, password: password.value })
+    await authStore.login({ username: username.value, password: password.value, remember: remember.value })
     router.replace(route.query.redirect || '/dashboard')
   } catch (err) {
     error.value = err.response?.data?.detail || err.message || '登录失败'
@@ -50,7 +52,21 @@ async function submitLogin() {
         </label>
         <label>
           <span>密码</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="请输入密码">
+          <div class="password-field">
+            <input v-model="password" :type="showPassword ? 'text' : 'password'" autocomplete="current-password" placeholder="请输入密码">
+            <button type="button" class="eye-btn" :title="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword">
+              <svg v-if="!showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 3l18 18"/><path d="M10.6 10.6A3 3 0 0 0 13.4 13.4"/><path d="M6.5 6.8C3.8 8.4 2.5 12 2.5 12s3.5 6 9.5 6c1.7 0 3.2-.5 4.5-1.2"/><path d="M19 14.4c1.6-1.3 2.5-2.4 2.5-2.4S18 6 12 6c-.8 0-1.6.1-2.3.3"/>
+              </svg>
+            </button>
+          </div>
+        </label>
+        <label class="remember-row">
+          <input v-model="remember" type="checkbox">
+          <span>7 天内自动登录</span>
         </label>
         <p v-if="error" class="login-error">{{ error }}</p>
         <button class="btn btn-primary" type="submit" :disabled="loading">
@@ -121,6 +137,52 @@ async function submitLogin() {
   background: #fff;
   color: var(--text-primary);
   outline: none;
+}
+
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.eye-btn {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  line-height: 0;
+}
+
+.eye-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.remember-row {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+  color: #334155 !important;
+  font-size: 13px;
+}
+
+.remember-row input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--green-deep);
 }
 
 .login-form input:focus {

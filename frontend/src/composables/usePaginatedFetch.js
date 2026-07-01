@@ -8,6 +8,7 @@ export function usePaginatedFetch(url) {
   const currentPage = ref(1)
   const pageSize = ref(50)
   const loading = ref(false)
+  const queryParams = ref({})
 
   async function fetch() {
     if (!dateRange.value || dateRange.value.length < 2) return null
@@ -20,6 +21,7 @@ export function usePaginatedFetch(url) {
           end: end.toISOString(),
           page: currentPage.value,
           page_size: pageSize.value,
+          ...queryParams.value,
         },
       })
       tableData.value = res.data.items
@@ -39,5 +41,5 @@ export function usePaginatedFetch(url) {
     fetch()
   }
 
-  return { dateRange, tableData, total, currentPage, pageSize, loading, fetch, handlePageChange }
+  return { dateRange, tableData, total, currentPage, pageSize, loading, queryParams, fetch, handlePageChange }
 }

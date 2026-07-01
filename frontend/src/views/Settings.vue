@@ -2,80 +2,108 @@
 import { computed, onMounted, ref } from 'vue'
 import api from '../utils/api'
 import { useSystemStore } from '../stores/system'
-import { useAuthStore } from '../stores/auth'
+import { DEFAULT_BOARD_ID } from '../utils/constants'
 import { showToast } from '../utils/toast'
+import { DEVICE_MAPPINGS, DEVICE_META, sourceMeta } from '../utils/sources'
 
 const systemStore = useSystemStore()
-const authStore = useAuthStore()
 const saving = ref(false)
+const ruleSaving = ref(false)
+
+const autoRule = ref({
+  enabled: true,
+  start_below: 30,
+  stop_at_or_above: 45,
+  consecutive_samples: 2,
+  max_run_sec: 60,
+  cooldown_sec: 180,
+})
 
 const thresholds = ref({
-  temperature: { min: 18, max: 35 },
-  humidity: { min: 30, max: 80 },
-  light: { min: 200, max: 2000 },
-  soil_moisture: { min: 25, max: 75 },
+  temperature: { min: 15, max: 35 },
+  humidity: { min: 30, max: 85 },
+  light: { min: 10, max: 90 },
+  soil_moisture: { min: 30, max: 70 },
+  co2: { min: null, max: 1000 },
+  soil_ec: { min: 0.5, max: 2.0 },
+  soil_tds: { min: 0, max: 1000 },
+  soil_fertility: { min: 30, max: 100 },
+  infrared: { min: 0, max: 1 },
 })
 
-const params = [
-  { key: 'temperature', label: '空气温度', desc: '联动灌溉水泵', unit: '°C', floor: -10, ceiling: 50, color: '#df463f' },
-  { key: 'humidity', label: '空气湿度', desc: '联动施肥泵', unit: '%', floor: 0, ceiling: 100, color: '#3c98f0' },
-  { key: 'light', label: '光照强度', desc: '联动天窗', unit: 'lux', floor: 0, ceiling: 2000, color: '#fb8b12' },
-  { key: 'soil_moisture', label: '土壤湿度', desc: '仅记录报警', unit: '%', floor: 0, ceiling: 100, color: '#37a85b' },
+const measuredThresholds = [
+  { key: 'temperature', label: '温度', unit: '°C', minLabel: '最小值', maxLabel: '最大值', floor: -20, ceiling: 50, source: 'measured', editable: true, color: '#ef4444' },
+  { key: 'humidity', label: '空气湿度', unit: '%', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 100, source: 'measured', editable: true, color: '#2563eb' },
+  { key: 'light', label: '相对光照', unit: '相对值', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 100, source: 'measured', editable: true, color: '#f97316' },
 ]
 
-// 设备映射,对应后端 config.py 的 PARAM_DEVICE_MAP + 控制逻辑(value<下限→开,value>上限→关)
-const POLICY_MAP = {
-  temperature: { device: '灌溉水泵', on: '开启水泵', off: '关闭水泵' },
-  humidity: { device: '施肥泵', on: '开启施肥', off: '关闭施肥' },
-  light: { device: '天窗', on: '开启天窗', off: '关闭天窗' },
-}
+const modelThresholds = [
+  { key: 'soil_moisture', label: '土壤湿度', unit: '%', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 100, source: 'simulated_firmware', editable: true, color: '#16a34a' },
+  { key: 'co2', label: 'CO2 浓度', unit: 'ppm', minLabel: '—', maxLabel: '最大值', floor: 0, ceiling: 5000, source: 'simulated_backend', editable: false, color: '#059669' },
+  { key: 'soil_ec', label: '土壤EC', unit: 'dS/m', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 5, source: 'computed_backend', editable: false, color: '#0d9488' },
+  { key: 'soil_tds', label: '土壤TDS', unit: 'ppm', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 2000, source: 'computed_backend', editable: false, color: '#0891b2' },
+  { key: 'soil_fertility', label: '土壤肥力', unit: '%', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 100, source: 'computed_backend', editable: true, color: '#65a30d' },
+  { key: 'infrared', label: '红外状态', unit: '', minLabel: '最小值', maxLabel: '最大值', floor: 0, ceiling: 1, source: 'simulated_backend', editable: false, color: '#dc2626' },
+]
 
-const configuredCount = computed(() => Object.keys(thresholds.value).length)
-const runningActuators = computed(() => Object.values(systemStore.actuators).filter(Boolean).length)
+const editableKeys = computed(() => [...measuredThresholds, ...modelThresholds].filter(i => i.editable).map(i => i.key))
 
-const statusCards = computed(() => [
-  { label: '运行模式', value: systemStore.mode === 'manual' ? '手动控制' : '自动控制', icon: 'shield', tone: 'green' },
-  { label: '终端设备', value: systemStore.deviceOnline ? '在线' : '离线', icon: 'device', tone: systemStore.deviceOnline ? 'green' : 'orange' },
-  { label: '有效阈值', value: `${configuredCount.value}/4`, icon: 'link', tone: 'green' },
-  { label: '服务器连接', value: systemStore.wsConnected ? '已连接' : '断开', icon: 'sliders', tone: systemStore.wsConnected ? 'green' : 'orange' },
-])
+const autoRuleFields = [
+  { key: 'start_below', label: '启动阈值', unit: '%', step: 0.1, min: 0 },
+  { key: 'stop_at_or_above', label: '停止阈值', unit: '%', step: 0.1, min: 0 },
+  { key: 'consecutive_samples', label: '连续样本', unit: '次', step: 1, min: 1 },
+  { key: 'max_run_sec', label: '最长运行', unit: '秒', step: 1, min: 1 },
+  { key: 'cooldown_sec', label: '冷却时间', unit: '秒', step: 1, min: 0 },
+]
 
-const thresholdCards = computed(() => params.map((item) => {
-  const value = thresholds.value[item.key]
-  const span = item.ceiling - item.floor || 1
-  const left = Math.max(0, Math.min(100, ((value.min - item.floor) / span) * 100))
-  const right = Math.max(0, Math.min(100, ((value.max - item.floor) / span) * 100))
-  return { ...item, min: value.min, max: value.max, bandLeft: left, bandWidth: Math.max(2, right - left) }
+const thresholdRows = computed(() => ({
+  measured: measuredThresholds.map(toThresholdRow),
+  model: modelThresholds.map(toThresholdRow),
 }))
 
-const policies = computed(() => {
-  const out = []
-  params.forEach((p) => {
-    const m = POLICY_MAP[p.key]
-    const th = thresholds.value[p.key]
-    if (m && th) {
-      out.push([`${p.label} < ${th.min}${p.unit}`, m.device, m.on])
-      out.push([`${p.label} > ${th.max}${p.unit}`, m.device, m.off])
-    } else if (th) {
-      out.push([`${p.label} 越界`, '—', '仅记录报警'])
-    }
-  })
-  return out
-})
+const actuatorPolicies = computed(() => Object.values(DEVICE_META).map((device) => ({
+  ...device,
+  active: Boolean(systemStore.actuators[device.key]),
+  stateText: systemStore.actuators[device.key] ? 'ON' : 'OFF',
+})))
 
-const connectionItems = computed(() => [
-  { label: '服务器连接', value: systemStore.wsConnected ? '已连接' : '断开', warn: !systemStore.wsConnected },
-  { label: '终端设备', value: systemStore.deviceOnline ? '在线' : '离线', warn: !systemStore.deviceOnline },
-  { label: '运行模式', value: systemStore.mode === 'manual' ? '手动' : '自动', warn: false },
-  { label: '执行器运行', value: `${runningActuators.value}/3`, warn: false },
-  { label: '采集周期', value: '2 秒', warn: false },
-])
+const mappingRows = computed(() => DEVICE_MAPPINGS.map((row) => {
+  const active = row.stateKey === 'system' ? systemStore.wsConnected : Boolean(systemStore.actuators[row.stateKey])
+  return {
+    ...row,
+    active,
+    state: active ? 'ON' : 'OFF',
+  }
+}))
+
+function toThresholdRow(item) {
+  const value = thresholds.value[item.key] || { min: 0, max: 0 }
+  const span = item.ceiling - item.floor || 1
+  const rawLeft = value.min == null ? item.floor : value.min
+  const rawRight = value.max == null ? rawLeft : value.max
+  const left = Math.max(0, Math.min(100, ((rawLeft - item.floor) / span) * 100))
+  const right = Math.max(0, Math.min(100, ((rawRight - item.floor) / span) * 100))
+  return {
+    ...item,
+    min: value.min,
+    max: value.max,
+    sourceMeta: sourceMeta(item.source),
+    bandLeft: Math.min(left, right),
+    bandWidth: Math.max(2, Math.abs(right - left)),
+  }
+}
+
+function valueText(value, unit) {
+  if (value == null) return '—'
+  return `${value}${unit}`
+}
 
 async function loadStatus() {
   try {
-    const [thresholdRes, statusRes] = await Promise.all([
+    const [thresholdRes, statusRes, ruleRes] = await Promise.all([
       api.get('/api/thresholds'),
       api.get('/api/status'),
+      api.get('/api/control-rules/soil-moisture-pump'),
     ])
     if (Array.isArray(thresholdRes.data)) {
       thresholdRes.data.forEach((item) => {
@@ -85,23 +113,72 @@ async function loadStatus() {
       })
     }
     systemStore.updateStatus(statusRes.data || {})
-  } catch { /* 后端不可用时保留系统默认值,不伪造状态 */ }
+    autoRule.value = normalizeRule(ruleRes.data)
+  } catch {
+    showToast({ title: '状态未刷新', message: '后端暂不可用，页面保留本地默认值', type: 'warn' })
+  }
 }
 
-onMounted(loadStatus)
+function normalizeRule(rule = autoRule.value) {
+  return {
+    enabled: Boolean(rule.enabled),
+    start_below: Number(rule.start_below),
+    stop_at_or_above: Number(rule.stop_at_or_above),
+    consecutive_samples: Number(rule.consecutive_samples),
+    max_run_sec: Number(rule.max_run_sec),
+    cooldown_sec: Number(rule.cooldown_sec),
+  }
+}
 
 async function saveThresholds() {
   saving.value = true
   try {
-    const payload = Object.entries(thresholds.value).map(([param_name, value]) => ({
+    const payload = editableKeys.value.map((param_name) => ({
       param_name,
-      min_value: Number(value.min),
-      max_value: Number(value.max),
+      min_value: Number(thresholds.value[param_name].min),
+      max_value: Number(thresholds.value[param_name].max),
     }))
     await api.put('/api/thresholds', payload)
-    showToast({ title: '保存成功', message: '阈值已保存,联动策略已同步更新', type: 'success' })
+    showToast({ title: '保存成功', message: '已保存当前后端支持的阈值', type: 'success' })
   } catch {
-    showToast({ title: '保存失败', message: '后端不可用,请稍后重试', type: 'warn' })
+    showToast({ title: '保存失败', message: '后端不可用，请稍后重试', type: 'warn' })
+  } finally {
+    saving.value = false
+  }
+}
+
+async function saveAutoRule({ silent = false } = {}) {
+  ruleSaving.value = true
+  try {
+    const payload = normalizeRule()
+    await api.put('/api/control-rules/soil-moisture-pump', payload)
+    autoRule.value = payload
+    if (!silent) {
+      showToast({ title: '保存成功', message: '已保存自动浇水规则', type: 'success' })
+    }
+  } catch {
+    if (!silent) {
+      showToast({ title: '保存失败', message: '自动浇水规则未保存，请检查阈值关系', type: 'warn' })
+    }
+    throw new Error('auto rule save failed')
+  } finally {
+    ruleSaving.value = false
+  }
+}
+
+async function saveAll() {
+  saving.value = true
+  try {
+    const payload = editableKeys.value.map((param_name) => ({
+      param_name,
+      min_value: Number(thresholds.value[param_name].min),
+      max_value: Number(thresholds.value[param_name].max),
+    }))
+    await api.put('/api/thresholds', payload)
+    await saveAutoRule({ silent: true })
+    showToast({ title: '保存成功', message: '已保存阈值和自动浇水规则', type: 'success' })
+  } catch {
+    showToast({ title: '保存失败', message: '请检查后端状态或自动浇水阈值关系', type: 'warn' })
   } finally {
     saving.value = false
   }
@@ -112,530 +189,477 @@ async function setMode(mode) {
   try {
     await api.put('/api/mode', { mode })
     systemStore.setMode(mode)
-    showToast({ title: '已切换', message: mode === 'auto' ? '自动控制' : '手动控制', type: 'success' })
+    showToast({ title: '已切换', message: mode === 'auto' ? '自动控制启用' : '手动控制启用', type: 'success' })
   } catch {
-    showToast({ title: '切换失败', message: '后端不可用,请稍后重试', type: 'warn' })
+    showToast({ title: '切换失败', message: '后端不可用，请稍后重试', type: 'warn' })
   }
 }
 
-const oldPassword = ref('')
-const newPassword = ref('')
-const confirmPassword = ref('')
-const pwdError = ref('')
-const pwdSuccess = ref('')
-const pwdSaving = ref(false)
-
-async function changePassword() {
-  pwdError.value = ''
-  pwdSuccess.value = ''
-  if (!oldPassword.value) { pwdError.value = '请输入原密码'; return }
-  if (newPassword.value.length < 6) { pwdError.value = '新密码至少6位'; return }
-  if (newPassword.value !== confirmPassword.value) { pwdError.value = '两次密码不一致'; return }
-  pwdSaving.value = true
+async function toggleActuator(device) {
+  const next = systemStore.actuators[device] ? 'off' : 'on'
   try {
-    await authStore.changePassword({ oldPassword: oldPassword.value, newPassword: newPassword.value })
-    pwdSuccess.value = '密码修改成功'
-    oldPassword.value = ''
-    newPassword.value = ''
-    confirmPassword.value = ''
-  } catch (err) {
-    pwdError.value = err.response?.data?.detail || '修改失败'
-  } finally {
-    pwdSaving.value = false
+    await api.post('/api/control', { board_id: systemStore.currentBoardId || DEFAULT_BOARD_ID, device, action: next })
+    systemStore.setActuator(device, next === 'on')
+  } catch {
+    showToast({ title: '控制失败', message: '串口网关或后端控制接口不可用', type: 'warn' })
   }
 }
+
+onMounted(loadStatus)
 </script>
 
 <template>
-  <div class="settings-page">
-    <header class="topbar">
+  <div class="control-page">
+    <header class="page-head">
       <div>
-        <h1 class="page-title">系统设置</h1>
-        <p class="page-subtitle">环境阈值、控制模式与设备联动策略</p>
+        <h1 class="page-title">控制与阈值</h1>
+        <p class="page-subtitle">配置真实阈值、控制策略和板端引脚映射</p>
       </div>
-      <button class="btn btn-primary" type="button" @click="saveThresholds">{{ saving ? '保存中' : '保存策略' }}</button>
+      <div class="head-actions">
+        <button class="btn btn-primary" type="button" @click="saveAll">{{ saving ? '保存中' : '保存配置' }}</button>
+        <button class="btn btn-soft mode-btn" :class="{ active: systemStore.mode === 'auto' }" type="button" @click="setMode(systemStore.mode === 'auto' ? 'manual' : 'auto')">
+          {{ systemStore.mode === 'auto' ? '自动控制启用' : '手动控制' }}
+        </button>
+      </div>
     </header>
 
-    <section class="status-row">
-      <article v-for="item in statusCards" :key="item.label" class="card status-card">
-        <span class="status-icon" :class="item.tone">
-          <svg v-if="item.icon === 'shield'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 5 6v5.2c0 4.4 2.8 7.6 7 9.8 4.2-2.2 7-5.4 7-9.8V6l-7-3z"/><path d="M12 8v6"/></svg>
-          <svg v-else-if="item.icon === 'device'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14M8 18v-5h8v5M9 5h6v8H9z"/><path d="M12 13v5"/></svg>
-          <svg v-else-if="item.icon === 'link'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h8M16 6h4M4 12h4M12 12h8M4 18h10M18 18h2"/><circle cx="14" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg>
-        </span>
-        <div>
-          <span>{{ item.label }}</span>
-          <strong :class="{ orange: item.tone === 'orange' }">{{ item.value }}</strong>
-        </div>
-      </article>
-    </section>
+    <div class="control-grid">
+      <main class="threshold-panel card">
+        <h2 class="section-title">阈值配置</h2>
 
-    <div class="settings-grid">
-      <main class="left-stack">
-        <section class="card threshold-panel">
-          <div class="panel-head">
-            <h2 class="section-title">报警阈值</h2>
-            <span class="badge badge-success">配置完整</span>
-          </div>
-          <div class="threshold-list">
-            <article v-for="card in thresholdCards" :key="card.key" class="threshold-item">
-              <div class="threshold-title">
-                <span class="status-dot" :style="{ background: card.color }"></span>
-                <div>
-                  <strong>{{ card.label }}</strong>
-                  <small>{{ card.desc }}</small>
-                </div>
-                <span class="unit">{{ card.unit }}</span>
-              </div>
-              <div class="track">
-                <span :style="{ left: `${card.bandLeft}%`, width: `${card.bandWidth}%`, background: card.color }"></span>
-              </div>
-              <div class="range-label">
-                <span>{{ card.floor }}{{ card.unit }}</span>
-                <strong>{{ card.min }} - {{ card.max }}{{ card.unit }}</strong>
-                <span>{{ card.ceiling }}{{ card.unit }}</span>
-              </div>
-              <div class="threshold-inputs">
-                <label>最小值 <input type="number" v-model.number="thresholds[card.key].min"></label>
-                <label>最大值 <input type="number" v-model.number="thresholds[card.key].max"></label>
-              </div>
-            </article>
-          </div>
+        <section class="threshold-section">
+          <div class="section-label">实测阈值 <b class="source-badge source-measured">实测</b></div>
+          <article v-for="item in thresholdRows.measured" :key="item.key" class="threshold-row">
+            <div class="threshold-name">
+              <span :style="{ color: item.color }">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M7 8h10"/><path d="M7 16h10"/></svg>
+              </span>
+              <strong>{{ item.label }} <small>({{ item.unit }})</small></strong>
+            </div>
+            <label>{{ item.minLabel }} <input type="number" v-model.number="thresholds[item.key].min"></label>
+            <div class="slider-track"><i :style="{ left: `${item.bandLeft}%`, width: `${item.bandWidth}%`, background: item.color }"></i></div>
+            <label>{{ item.maxLabel }} <input type="number" v-model.number="thresholds[item.key].max"></label>
+            <b class="source-badge" :class="item.sourceMeta.className">{{ item.sourceMeta.label }}</b>
+          </article>
         </section>
 
-        <section class="card policy-card">
-          <div class="panel-head">
-            <h2 class="section-title">联动策略</h2>
-            <span class="hint-text">由阈值与设备映射自动生成</span>
-          </div>
-          <table class="policy-table">
-            <thead><tr><th>触发条件</th><th>联动设备</th><th>执行动作</th></tr></thead>
-            <tbody>
-              <tr v-for="(row, i) in policies" :key="i">
-                <td>{{ row[0] }}</td>
-                <td>{{ row[1] }}</td>
-                <td>{{ row[2] }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <section class="threshold-section">
+          <div class="section-label">模型阈值 <b class="source-badge source-model">模型</b></div>
+          <article v-for="item in thresholdRows.model" :key="item.key" class="threshold-row" :class="{ disabled: !item.editable }">
+            <div class="threshold-name">
+              <span :style="{ color: item.color }">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c4.2 4.8 6.4 8.3 6.4 10.9a6.4 6.4 0 0 1-12.8 0C5.6 11.3 7.8 7.8 12 3z"/></svg>
+              </span>
+              <strong>{{ item.label }} <small>({{ item.unit }})</small></strong>
+            </div>
+            <label>{{ item.minLabel }} <input type="number" v-model.number="thresholds[item.key].min" :disabled="!item.editable"></label>
+            <div class="slider-track"><i :style="{ left: `${item.bandLeft}%`, width: `${item.bandWidth}%`, background: item.color }"></i></div>
+            <label>{{ item.maxLabel }} <input type="number" v-model.number="thresholds[item.key].max" :disabled="!item.editable"></label>
+            <b class="source-badge" :class="item.sourceMeta.className">{{ item.sourceMeta.label }}</b>
+          </article>
         </section>
       </main>
 
-      <aside class="right-stack">
-        <section class="card mode-card">
-          <h2 class="section-title">运行模式</h2>
-          <div class="mode-options">
-            <button class="mode-option" :class="{ active: systemStore.mode === 'auto' }" type="button" @click="setMode('auto')">
-              <span></span>
-              <div><strong>自动控制</strong><small>系统按照策略自动执行联动</small></div>
-            </button>
-            <button class="mode-option" :class="{ active: systemStore.mode === 'manual' }" type="button" @click="setMode('manual')">
-              <span></span>
-              <div><strong>手动控制</strong><small>手动操作执行器设备</small></div>
-            </button>
-          </div>
-        </section>
-
-        <section class="card connection-card">
-          <div class="panel-head">
-            <h2 class="section-title">连接状态</h2>
-            <button class="btn btn-ghost" type="button" @click="loadStatus">刷新状态</button>
-          </div>
-          <div class="connection-list">
-            <div v-for="item in connectionItems" :key="item.label">
-              <span class="status-dot" :class="item.warn ? 'orange' : 'green'"></span>
-              <span>{{ item.label }}</span>
-              <strong :class="{ orange: item.warn }">{{ item.value }}</strong>
+      <aside class="policy-panel">
+        <section class="card auto-rule-card">
+          <div class="rule-head">
+            <div>
+              <h2 class="section-title">自动浇水规则</h2>
+              <p>基于土壤湿度控制普通浇水泵</p>
             </div>
+            <label class="switch-row">
+              <input v-model="autoRule.enabled" type="checkbox">
+              <span>{{ autoRule.enabled ? '启用' : '停用' }}</span>
+            </label>
           </div>
+          <div class="rule-grid">
+            <label v-for="field in autoRuleFields" :key="field.key">
+              <span>{{ field.label }}</span>
+              <input
+                v-model.number="autoRule[field.key]"
+                type="number"
+                :step="field.step"
+                :min="field.min"
+              >
+              <small>{{ field.unit }}</small>
+            </label>
+          </div>
+          <p class="rule-summary">
+            土壤湿度连续 {{ autoRule.consecutive_samples }} 次低于 {{ autoRule.start_below }}% 时启动，达到 {{ autoRule.stop_at_or_above }}% 或运行 {{ autoRule.max_run_sec }} 秒后停止，冷却 {{ autoRule.cooldown_sec }} 秒。
+          </p>
+          <button class="btn btn-soft" type="button" :disabled="ruleSaving" @click="saveAutoRule()">{{ ruleSaving ? '保存中' : '保存自动规则' }}</button>
         </section>
 
-        <section class="card pwd-card">
-          <h2 class="section-title">修改密码</h2>
-          <div class="pwd-form">
-            <label>原密码 <input type="password" v-model="oldPassword" autocomplete="current-password"></label>
-            <label>新密码 <input type="password" v-model="newPassword" autocomplete="new-password" placeholder="至少6位"></label>
-            <label>确认密码 <input type="password" v-model="confirmPassword" autocomplete="new-password"></label>
-            <p v-if="pwdError" class="pwd-msg pwd-error">{{ pwdError }}</p>
-            <p v-if="pwdSuccess" class="pwd-msg pwd-ok">{{ pwdSuccess }}</p>
-            <button class="btn btn-primary" type="button" @click="changePassword" :disabled="pwdSaving">
-              {{ pwdSaving ? '保存中' : '修改密码' }}
-            </button>
-          </div>
+        <section class="card actuator-card">
+          <h2 class="section-title">执行器策略</h2>
+          <article v-for="item in actuatorPolicies" :key="item.key" class="actuator-policy">
+            <span class="device-icon" :style="{ color: item.color }">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 19h10"/><path d="M9 19v-7h6v7"/><path d="M10 12V6h4v6"/><path d="M8 6h8"/></svg>
+            </span>
+            <div>
+              <header>
+                <strong>{{ item.label }}</strong>
+                <b class="source-badge source-control">{{ item.mode }}</b>
+              </header>
+              <p>依据：{{ item.basis }}</p>
+              <p>控制指令：{{ item.commandOn }} / {{ item.commandOff }}</p>
+              <p class="rule-line">当前状态 <b :class="{ on: item.active }">{{ item.stateText }}</b></p>
+            </div>
+            <button class="toggle" :class="{ active: item.active }" type="button" @click="toggleActuator(item.key)"></button>
+          </article>
         </section>
       </aside>
     </div>
+
+    <section class="card mapping-panel">
+      <h2 class="section-title">设备映射</h2>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>设备</th>
+              <th>板端引脚</th>
+              <th>作用</th>
+              <th>当前状态</th>
+              <th>命令/说明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in mappingRows" :key="row.pin">
+              <td>{{ row.label }}</td>
+              <td>{{ row.pin }}</td>
+              <td>{{ row.role }}</td>
+              <td><span class="status-dot" :class="row.active ? 'green' : 'gray'"></span> {{ row.state }}</td>
+              <td>{{ row.command }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="mapping-note">模型字段可参与演示控制，但告警和控制记录需要保留来源标记；当前后端只执行已有阈值和三路控制命令。</p>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.settings-page {
-  max-width: 1260px;
+.control-page {
+  max-width: 1600px;
   margin: 0 auto;
 }
 
-.topbar,
-.status-card,
-.panel-head,
-.threshold-title,
-.range-label,
-.threshold-inputs,
-.mode-options,
-.mode-option,
-.connection-list div {
+.page-head,
+.head-actions,
+.threshold-row,
+.threshold-name,
+.section-label,
+.rule-head,
+.switch-row,
+.actuator-policy,
+.actuator-policy header,
+.rule-line {
   display: flex;
   align-items: center;
 }
 
-.topbar {
+.page-head {
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 22px;
-}
-
-.status-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
-}
-
-.status-card {
-  height: 76px;
   gap: 18px;
-  padding: 16px 22px;
+  margin-bottom: 16px;
 }
 
-.status-icon {
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #79b789;
-}
-
-.status-icon.orange {
-  color: var(--orange);
-}
-
-.status-icon svg {
-  width: 32px;
-  height: 32px;
-}
-
-.status-card div {
-  display: grid;
-  gap: 2px;
-}
-
-.status-card span {
-  color: var(--text-muted);
-}
-
-.status-card strong {
-  font-size: 21px;
-}
-
-.status-card .orange {
-  color: var(--orange);
-}
-
-.settings-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 460px;
+.head-actions {
   gap: 14px;
 }
 
-.left-stack,
-.right-stack {
+.mode-btn.active {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.control-grid {
   display: grid;
-  gap: 12px;
-  align-content: start;
-  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 440px;
+  gap: 14px;
+  align-items: start;
 }
 
 .threshold-panel,
-.mode-card,
-.connection-card,
-.policy-card {
-  padding: 16px;
+.actuator-card,
+.mapping-panel {
+  padding: 14px;
 }
 
-.panel-head {
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 14px;
+.threshold-panel h2,
+.actuator-card h2,
+.mapping-panel h2 {
+  margin-bottom: 16px;
 }
 
-.hint-text {
-  color: var(--text-muted);
-  font-size: 12px;
+.threshold-section + .threshold-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
 }
 
-.threshold-list {
-  display: grid;
-}
-
-.threshold-item {
-  padding: 11px 0 10px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-}
-
-.threshold-item + .threshold-item {
-  margin-top: -1px;
-}
-
-.threshold-title {
+.section-label {
   gap: 10px;
-  padding: 0 12px;
+  margin-bottom: 10px;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 800;
 }
 
-.threshold-title div {
+.threshold-row {
   display: grid;
-  gap: 2px;
+  grid-template-columns: 170px 96px minmax(110px, 1fr) 96px 78px;
+  gap: 10px;
+  min-height: 50px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-light);
 }
 
-.threshold-title small {
-  color: var(--text-muted);
+.threshold-row:last-child {
+  border-bottom: 0;
 }
 
-.unit {
-  margin-left: auto;
-  min-width: 34px;
-  height: 24px;
+.threshold-row.disabled {
+  opacity: .72;
+}
+
+.threshold-name {
+  gap: 10px;
+  min-width: 0;
+}
+
+.threshold-name span {
+  width: 26px;
+  height: 26px;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: #f4f4f4;
-  color: var(--text-muted);
-  font-weight: 700;
-  font-size: 12px;
+  flex: 0 0 auto;
 }
 
-.track {
+.threshold-name svg {
+  width: 24px;
+  height: 24px;
+}
+
+.threshold-name strong {
+  min-width: 0;
+  color: #17223b;
+}
+
+.threshold-name small {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.threshold-row label {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.threshold-row input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fff;
+  color: #0f172a;
+}
+
+.threshold-row input:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.slider-track {
   position: relative;
   height: 6px;
-  margin: 11px 12px 6px;
   border-radius: 999px;
-  background: #f0f0ee;
+  background: #e8edf4;
 }
 
-.track span {
+.slider-track i {
   position: absolute;
   top: 0;
   height: 6px;
   border-radius: 999px;
 }
 
-.range-label {
-  justify-content: space-between;
-  margin: 0 12px 6px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.range-label strong {
-  color: var(--text-primary);
-  font-size: 13px;
-}
-
-.threshold-inputs {
-  gap: 34px;
-  padding: 0 12px;
-}
-
-.threshold-inputs label {
-  flex: 1;
+.policy-panel {
   display: grid;
-  gap: 5px;
-  color: var(--text-muted);
-  font-size: 12px;
+  gap: 14px;
 }
 
-.threshold-inputs input {
-  height: 29px;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 0 10px;
-  background: #fff;
-  color: var(--text-primary);
-}
-
-.mode-card h2 {
-  margin-bottom: 18px;
-}
-
-.mode-options {
-  gap: 16px;
-}
-
-.mode-option {
-  flex: 1;
-  min-height: 88px;
-  gap: 12px;
-  padding: 18px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-  background: #fff;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mode-option.active {
-  border-color: #2d8b4d;
-  box-shadow: inset 0 0 0 1px rgba(45, 139, 77, 0.25);
-}
-
-.mode-option > span {
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.mode-option.active > span {
-  border: 5px solid #4a9d61;
-}
-
-.mode-option div {
+.actuator-card {
   display: grid;
-  gap: 5px;
-}
-
-.mode-option small {
-  color: var(--text-muted);
-}
-
-.connection-list {
-  display: grid;
-  padding: 12px 16px;
-  border: 1px solid var(--border-light);
-  border-radius: 7px;
-}
-
-.connection-list div {
-  height: 34px;
   gap: 10px;
 }
 
-.connection-list strong {
-  margin-left: auto;
-  color: var(--green-deep);
-}
-
-.connection-list .orange {
-  color: var(--orange);
-}
-
-.policy-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.policy-table th,
-.policy-table td {
-  height: 38px;
-  padding: 0 12px;
-  border: 1px solid var(--border-light);
-  text-align: left;
-}
-
-.policy-table th {
-  background: #fafafa;
-  color: var(--text-muted);
-}
-
-.pwd-card {
-  padding: 16px;
-}
-
-.pwd-card h2 {
-  margin-bottom: 16px;
-}
-
-.pwd-form {
+.auto-rule-card {
   display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.rule-head {
+  justify-content: space-between;
   gap: 12px;
 }
 
-.pwd-form label {
-  display: grid;
-  gap: 5px;
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.pwd-form input {
-  height: 36px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  padding: 0 12px;
-  background: #fff;
-  color: var(--text-primary);
-  outline: none;
-}
-
-.pwd-form input:focus {
-  border-color: var(--green-deep);
-  box-shadow: 0 0 0 3px rgba(36, 113, 61, 0.1);
-}
-
-.pwd-msg {
+.rule-head p {
+  margin-top: 5px;
+  color: #64748b;
   font-size: 13px;
 }
 
-.pwd-error {
-  color: var(--red);
+.switch-row {
+  gap: 8px;
+  color: #334155;
+  font-weight: 750;
 }
 
-.pwd-ok {
-  color: var(--green-deep);
+.switch-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--green-deep);
 }
 
-.pwd-form .btn {
+.rule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rule-grid label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px 32px;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+}
+
+.rule-grid span,
+.rule-grid small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rule-grid input {
   width: 100%;
-  height: 36px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #0f172a;
 }
 
-@media (max-width: 1120px) {
-  .status-row,
-  .settings-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .right-stack {
-    grid-column: 1 / -1;
-  }
+.rule-summary {
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-@media (max-width: 860px) {
-  .topbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+.actuator-policy {
+  gap: 10px;
+  min-height: 108px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
 
-  .topbar .btn {
-    width: 100%;
-  }
+.device-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+}
 
-  .status-row,
-  .settings-grid {
+.device-icon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.actuator-policy div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.actuator-policy header {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.actuator-policy strong {
+  font-size: 16px;
+}
+
+.actuator-policy p {
+  color: #475569;
+  font-size: 13px;
+}
+
+.rule-line b {
+  margin-left: 8px;
+  color: #94a3b8;
+}
+
+.rule-line b.on {
+  color: #16a34a;
+}
+
+.mapping-panel {
+  margin-top: 16px;
+}
+
+.mapping-panel h2 {
+  margin-bottom: 14px;
+}
+
+.mapping-note {
+  margin-top: 12px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.status-dot.gray {
+  background: #94a3b8;
+}
+
+@media (max-width: 1280px) {
+  .control-grid {
     grid-template-columns: 1fr;
   }
+}
 
-  .mode-options,
-  .threshold-inputs {
-    flex-direction: column;
+@media (max-width: 900px) {
+  .page-head,
+  .head-actions {
     align-items: stretch;
-    gap: 10px;
+    flex-direction: column;
+  }
+
+  .threshold-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .rule-head,
+  .switch-row {
+    align-items: flex-start;
+  }
+
+  .rule-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

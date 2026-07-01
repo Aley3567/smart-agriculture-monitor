@@ -1,16 +1,25 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useSensorStore } from '../stores/sensor'
 import { usePaginatedFetch } from '../composables/usePaginatedFetch'
 import api from '../utils/api'
-import { PARAM_LABEL, PARAM_UNIT, ACTION_LABEL } from '../utils/constants'
+import { ACTION_LABEL, PARAM_LABEL, PARAM_UNIT } from '../utils/constants'
 import { formatDateTime } from '../utils/format'
+import { sourceMeta } from '../utils/sources'
 
-const { dateRange, tableData, total, currentPage, pageSize, fetch: fetchAlarms, handlePageChange } =
+const { dateRange, tableData, total, currentPage, pageSize, queryParams, fetch: fetchAlarms, handlePageChange } =
   usePaginatedFetch('/api/alarms')
 
+const sensorStore = useSensorStore()
+pageSize.value = 10
+
 const summary = ref({ total: 0, today: 0, last_24h: 0, by_param: {}, latest: null })
-const paramFilter = ref('')
-const rangeKey = ref('7d')
+const rangeKey = ref('24h')
+const levelFilter = ref('')
+const dataSourceFilter = ref('all')
+const sourceFilter = ref('')
+const statusFilter = ref('')
+const searchKeyword = ref('')
 const selectedId = ref(null)
 
 const RANGE_PRESETS = {
@@ -19,31 +28,60 @@ const RANGE_PRESETS = {
   '30d': { label: '近 30 天', ms: 30 * 24 * 3600 * 1000 },
 }
 
-function unitOf(param) {
-  return PARAM_UNIT[param] || ''
-}
+const DATA_SOURCE_FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'real', label: '真实告警' },
+  { value: 'test', label: '测试告警' },
+]
 
-function directionOf(row) {
-  return row.value < row.threshold ? 'low' : 'high'
-}
+const kpis = computed(() => {
+  const dist = sourceDistribution.value
+  return [
+    { label: '今日告警', value: summary.value.today || 0, tone: 'red', note: '后端统计' },
+    { label: '未确认', value: '—', tone: 'orange', note: '后端未提供状态字段' },
+    { label: '模型告警', value: dist.model || 0, tone: 'green', note: '当前页来源估算' },
+    { label: '实测告警', value: dist.measured || 0, tone: 'blue', note: '当前页来源估算' },
+    { label: '自动控制', value: '—', tone: 'purple', note: '控制日志单独查询' },
+  ]
+})
 
-const rows = computed(() => tableData.value
-  .filter(r => !paramFilter.value || r.param_name === paramFilter.value)
-  .map(r => ({
-    id: r.id,
-    time: formatDateTime(r.timestamp),
-    param: PARAM_LABEL[r.param_name] || r.param_name,
-    paramRaw: r.param_name,
-    value: `${r.value}${unitOf(r.param_name)}`,
-    threshold: `${r.value < r.threshold ? '<' : '>'} ${r.threshold}${unitOf(r.param_name)}`,
-    action: ACTION_LABEL[r.action] || r.action,
-    raw: r,
-  })))
+const rows = computed(() => tableData.value.map((item) => {
+  const direction = item.value < item.threshold ? 'low' : 'high'
+  const source = sourceForParam(item.param_name)
+  const level = levelOf(item)
+  return {
+    id: item.id,
+    time: formatDateTime(item.timestamp),
+    level,
+    levelLabel: level === 'high' ? '高' : '中',
+    source,
+    sourceKind: sourceKindOf(source),
+    sourceRaw: item.source || 'bridge',
+    isTest: Boolean(item.is_test),
+    sensorDataId: item.sensor_data_id,
+    param: PARAM_LABEL[item.param_name] || item.param_name,
+    paramRaw: item.param_name,
+    value: `${item.value}${unitOf(item.param_name)}`,
+    threshold: `${direction === 'low' ? '<' : '>'} ${item.threshold}${unitOf(item.param_name)}`,
+    action: ACTION_LABEL[item.action] || item.action,
+    status: '状态未接入',
+    direction,
+    raw: item,
+  }
+}))
+
+const filteredRows = computed(() => rows.value.filter((row) => {
+  if (levelFilter.value && row.level !== levelFilter.value) return false
+  if (sourceFilter.value && row.sourceKind !== sourceFilter.value) return false
+  if (statusFilter.value && statusFilter.value !== 'pending') return false
+  const keyword = searchKeyword.value.trim()
+  if (keyword && !`${row.param}${row.action}${row.time}`.includes(keyword)) return false
+  return true
+}))
 
 const selected = computed(() => {
-  const list = rows.value
-  if (!list.length) return null
-  return list.find(r => r.id === selectedId.value) || list[0]
+  if (!filteredRows.value.length) return null
+  return filteredRows.value.find(r => r.id === selectedId.value) || filteredRows.value[0]
 })
 
 const rangeText = computed(() => {
@@ -53,26 +91,68 @@ const rangeText = computed(() => {
 
 const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize.value)))
 
-const paramDist = computed(() => Object.entries(summary.value.by_param || {})
-  .map(([k, v]) => ({ label: PARAM_LABEL[k] || k, count: v }))
-  .sort((a, b) => b.count - a.count))
-
-const adviceMap = {
-  temperature: ['核对温室通风与天窗开度', '高温启动降温、低温注意保温', '关注作物耐受温度区间'],
-  humidity: ['检查通风与施肥联动是否生效', '湿度过高警惕病害,过低及时补水', '核对湿度传感器是否结露'],
-  light: ['强光放下遮阳,弱光开启补光/天窗', '核对光照传感器是否被遮挡', '结合作物需光特性调节'],
-  soil_moisture: ['土壤过干及时灌溉,过湿暂停供水', '检查滴灌管路与水泵状态', '按土壤墒情设定灌溉阈值'],
-}
-const advice = computed(() => {
-  const p = selected.value?.paramRaw
-  return adviceMap[p] || ['核对对应传感器读数是否正常', '检查相关执行器联动是否生效', '持续关注该参数变化趋势']
+const sourceDistribution = computed(() => {
+  const out = { measured: 0, model: 0, control: 0, system: 0, api: 0 }
+  rows.value.forEach((row) => {
+    out[row.sourceKind] = (out[row.sourceKind] || 0) + 1
+  })
+  return out
 })
+
+const histogram = computed(() => {
+  const buckets = new Map()
+  rows.value.forEach((row) => {
+    const hour = row.time.slice(11, 13)
+    buckets.set(hour, (buckets.get(hour) || 0) + 1)
+  })
+  return [...buckets.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([hour, count]) => ({ hour: `${hour}:00`, count }))
+})
+
+function unitOf(param) {
+  return PARAM_UNIT[param] || ''
+}
+
+function levelOf(row) {
+  const unit = Math.abs(Number(row.value) - Number(row.threshold))
+  if (row.param_name === 'temperature' && unit >= 3) return 'high'
+  if (row.param_name === 'soil_moisture' && unit >= 5) return 'high'
+  return row.value > row.threshold ? 'high' : 'medium'
+}
+
+function sourceForParam(param) {
+  const field = sensorStore.fieldForParam(param)
+  if (field) return sourceMeta(field.source)
+  return sourceMeta('system')
+}
+
+function sourceKindOf(source) {
+  if (source.label === '实测') return 'measured'
+  if (source.label === '板端模拟') return 'measured'
+  if (source.label === '模型') return 'model'
+  if (source.label === '控制') return 'control'
+  if (source.label === '气象接口') return 'api'
+  return 'system'
+}
+
+function barHeight(count) {
+  const max = Math.max(1, ...histogram.value.map(i => i.count))
+  return `${Math.max(8, (count / max) * 110)}px`
+}
 
 function applyRange(key) {
   rangeKey.value = key
   const end = new Date()
   const start = new Date(end.getTime() - RANGE_PRESETS[key].ms)
   dateRange.value = [start, end]
+  currentPage.value = 1
+  queryParams.value = { source: dataSourceFilter.value }
+  fetchAlarms()
+}
+
+function applyDataSourceFilter(value) {
+  dataSourceFilter.value = value
+  currentPage.value = 1
+  queryParams.value = { source: value }
   fetchAlarms()
 }
 
@@ -80,12 +160,31 @@ async function fetchSummary() {
   try {
     const res = await api.get('/api/alarms/summary')
     summary.value = res.data
-  } catch { /* 保持上一次数据 */ }
+  } catch { /* keep current */ }
+}
+
+async function fetchSensorFields() {
+  try {
+    const res = await api.get('/api/sensor-fields')
+    sensorStore.setFieldCatalog(res.data)
+  } catch { /* keep fallback catalog */ }
 }
 
 function refresh() {
+  fetchSensorFields()
   fetchAlarms()
   fetchSummary()
+}
+
+function resetFilters() {
+  levelFilter.value = ''
+  dataSourceFilter.value = 'all'
+  sourceFilter.value = ''
+  statusFilter.value = ''
+  searchKeyword.value = ''
+  currentPage.value = 1
+  queryParams.value = { source: dataSourceFilter.value }
+  fetchAlarms()
 }
 
 function selectRow(id) {
@@ -93,157 +192,191 @@ function selectRow(id) {
 }
 
 onMounted(() => {
-  applyRange('7d')
+  fetchSensorFields()
+  applyRange('24h')
   fetchSummary()
 })
 </script>
 
 <template>
   <div class="alarm-page">
-    <header class="topbar">
-      <h1 class="page-title">报警日志</h1>
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">告警日志</h1>
+        <p class="page-subtitle">按来源追溯告警、阈值规则和控制动作</p>
+      </div>
       <button class="btn btn-primary" type="button" @click="refresh">刷新日志</button>
     </header>
 
-    <div class="alarm-grid">
-      <main class="left-stack">
-        <section class="summary-row">
-          <article class="card summary-card">
-            <span>今日报警</span>
-            <div><strong class="red">{{ summary.today }}</strong></div>
-          </article>
-          <article class="card summary-card">
-            <span>近 24 小时</span>
-            <div><strong class="orange">{{ summary.last_24h }}</strong></div>
-          </article>
-          <article class="card summary-card">
-            <span>累计报警</span>
-            <div><strong class="blue">{{ summary.total }}</strong></div>
-          </article>
-          <article class="card summary-card">
-            <span>最常触发</span>
-            <div>
-              <strong class="green param-strong">{{ paramDist[0]?.label || '—' }}</strong>
-              <small v-if="paramDist[0]">{{ paramDist[0].count }} 次</small>
-            </div>
-          </article>
-        </section>
-
-        <section class="card filter-card">
-          <div class="filter-group wide">
-            <label>时间范围</label>
-            <div class="range-tabs">
-              <button
-                v-for="(preset, key) in RANGE_PRESETS"
-                :key="key"
-                type="button"
-                :class="{ active: rangeKey === key }"
-                @click="applyRange(key)"
-              >{{ preset.label }}</button>
-            </div>
-            <small class="range-text">{{ rangeText }}</small>
-          </div>
-          <div class="filter-group">
-            <label>参数类型</label>
-            <select v-model="paramFilter" class="select-real">
-              <option value="">全部</option>
-              <option value="temperature">温度</option>
-              <option value="humidity">湿度</option>
-              <option value="light">光照</option>
-              <option value="soil_moisture">土壤湿度</option>
-            </select>
-          </div>
-          <button class="btn btn-soft query-btn" type="button" @click="refresh">刷新</button>
-        </section>
-
-        <section class="card event-card">
-        <h2 class="section-title">事件明细</h2>
-        <div class="table-scroll">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>发生时间</th>
-                <th>参数类型</th>
-                <th class="col-number">触发值</th>
-                <th class="col-number">阈值</th>
-                <th>执行动作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!rows.length">
-                <td colspan="5" class="empty-cell">该时间范围内暂无报警记录</td>
-              </tr>
-              <tr
-                v-for="row in rows"
-                :key="row.id"
-                :class="{ hot: row.id === selected?.id }"
-                @click="selectRow(row.id)"
-              >
-                <td>{{ row.time }}</td>
-                <td>{{ row.param }}</td>
-                <td class="col-number">{{ row.value }}</td>
-                <td class="col-number">{{ row.threshold }}</td>
-                <td>{{ row.action }}</td>
-              </tr>
-            </tbody>
-          </table>
+    <section class="card filter-card">
+      <div class="filter-range">
+        <label>时间范围</label>
+        <div class="range-tabs">
+          <button v-for="(preset, key) in RANGE_PRESETS" :key="key" type="button" :class="{ active: rangeKey === key }" @click="applyRange(key)">
+            {{ preset.label }}
+          </button>
         </div>
-
-        <div class="pagination" v-if="total > 0">
-          <span>共 {{ total }} 条</span>
-          <button type="button" :disabled="currentPage <= 1" @click="handlePageChange(currentPage - 1)">‹</button>
-          <button class="active" type="button">{{ currentPage }} / {{ totalPages }}</button>
-          <button type="button" :disabled="currentPage >= totalPages" @click="handlePageChange(currentPage + 1)">›</button>
+        <span>{{ rangeText }}</span>
+      </div>
+      <div class="filter-range compact">
+        <label>告警来源</label>
+        <div class="range-tabs">
+          <button
+            v-for="item in DATA_SOURCE_FILTERS"
+            :key="item.value"
+            type="button"
+            :class="{ active: dataSourceFilter === item.value }"
+            @click="applyDataSourceFilter(item.value)"
+          >
+            {{ item.label }}
+          </button>
         </div>
+      </div>
+      <label>级别
+        <select v-model="levelFilter">
+          <option value="">全部</option>
+          <option value="high">高</option>
+          <option value="medium">中</option>
+        </select>
+      </label>
+      <label>来源类型
+        <select v-model="sourceFilter">
+          <option value="">全部</option>
+          <option value="measured">实测</option>
+          <option value="model">模型</option>
+          <option value="control">控制</option>
+          <option value="system">系统</option>
+          <option value="api">气象接口</option>
+        </select>
+      </label>
+      <label>状态
+        <select v-model="statusFilter">
+          <option value="">全部</option>
+          <option value="pending">状态未接入</option>
+        </select>
+      </label>
+      <input v-model="searchKeyword" class="field search-field" type="text" placeholder="输入指标或告警内容">
+      <button class="btn btn-soft" type="button" @click="resetFilters">重置</button>
+    </section>
+
+    <section class="kpi-row">
+      <article v-for="item in kpis" :key="item.label" class="card kpi-card" :class="item.tone">
+        <span>{{ item.label }}</span>
+        <strong>{{ item.value }}</strong>
+        <p>{{ item.note }}</p>
+      </article>
+    </section>
+
+    <div class="alarm-layout">
+      <main class="alarm-main">
+        <section class="card table-panel">
+          <h2 class="section-title">告警记录</h2>
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>级别</th>
+                  <th>指标</th>
+                  <th class="col-number">当前值</th>
+                  <th class="col-number">阈值</th>
+                  <th>来源</th>
+                  <th>处理状态</th>
+                  <th>触发动作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!filteredRows.length">
+                  <td colspan="8" class="empty-cell">该范围内暂无匹配告警</td>
+                </tr>
+                <tr v-for="row in filteredRows" :key="row.id" :class="{ selected: row.id === selected?.id }" @click="selectRow(row.id)">
+                  <td>{{ row.time }}</td>
+                  <td><span class="level-dot" :class="row.level"></span>{{ row.levelLabel }}</td>
+                  <td>{{ row.param }}</td>
+                  <td class="col-number value-cell" :class="{ red: row.level === 'high' }">{{ row.value }}</td>
+                  <td class="col-number">{{ row.threshold }}</td>
+                  <td>
+                    <b class="source-badge" :class="row.source.className">{{ row.source.label }}</b>
+                    <b v-if="row.isTest" class="injection-tag">测试注入</b>
+                  </td>
+                  <td><b class="source-badge source-pending">{{ row.status }}</b></td>
+                  <td>{{ row.action }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination" v-if="total > 0">
+            <span>共 {{ total }} 条</span>
+            <button type="button" :disabled="currentPage <= 1" @click="handlePageChange(currentPage - 1)">‹</button>
+            <button class="active" type="button">{{ currentPage }} / {{ totalPages }}</button>
+            <button type="button" :disabled="currentPage >= totalPages" @click="handlePageChange(currentPage + 1)">›</button>
+          </div>
         </section>
+
+        <div class="chart-row">
+          <section class="card dist-card">
+            <h2 class="section-title">告警来源分布</h2>
+            <div class="donut">
+              <strong>{{ rows.length }}</strong>
+              <span>当前页</span>
+            </div>
+            <ul>
+              <li><i class="measured"></i>实测 {{ sourceDistribution.measured || 0 }}</li>
+              <li><i class="model"></i>模型 {{ sourceDistribution.model || 0 }}</li>
+              <li><i class="control"></i>控制 {{ sourceDistribution.control || 0 }}</li>
+              <li><i class="system"></i>系统 {{ sourceDistribution.system || 0 }}</li>
+            </ul>
+          </section>
+
+          <section class="card trend-card">
+            <h2 class="section-title">近范围告警趋势</h2>
+            <div class="bars">
+              <article v-if="!histogram.length" class="bar-empty">暂无数据</article>
+              <article v-for="item in histogram" :key="item.hour">
+                <span :style="{ height: barHeight(item.count) }"></span>
+                <b>{{ item.count }}</b>
+                <small>{{ item.hour }}</small>
+              </article>
+            </div>
+          </section>
+        </div>
       </main>
 
-      <aside class="right-stack">
-        <section class="card detail-card">
+      <aside class="alarm-side card">
+        <template v-if="selected">
           <div class="detail-head">
-            <h2 class="section-title">报警详情</h2>
+            <h2 class="section-title">告警详情</h2>
+            <b class="source-badge source-pending">状态未接入</b>
           </div>
-          <template v-if="selected">
-            <div class="detail-title">
-              <span class="badge" :class="directionOf(selected.raw) === 'low' ? 'badge-info' : 'badge-danger'">
-                {{ directionOf(selected.raw) === 'low' ? '偏低' : '偏高' }}
-              </span>
-              <strong>{{ selected.param }}{{ directionOf(selected.raw) === 'low' ? '低于下限' : '高于上限' }}</strong>
-            </div>
-            <dl>
-              <div><dt>发生时间</dt><dd>{{ selected.time }}</dd></div>
-              <div><dt>参数类型</dt><dd>{{ selected.param }}</dd></div>
-              <div><dt>触发值</dt><dd>{{ selected.value }}</dd></div>
-              <div><dt>阈值</dt><dd>{{ selected.threshold }}</dd></div>
-              <div><dt>执行动作</dt><dd>{{ selected.action }}</dd></div>
-            </dl>
-          </template>
-          <p v-else class="empty-cell">选择左侧记录查看详情</p>
-        </section>
+          <dl>
+            <div><dt>告警内容</dt><dd>{{ selected.param }}{{ selected.direction === 'low' ? '低于阈值' : '超过阈值' }}</dd></div>
+            <div><dt>来源说明</dt><dd><b class="source-badge" :class="selected.source.className">{{ selected.source.label }}</b></dd></div>
+            <div><dt>数据来源</dt><dd>{{ selected.sourceRaw }}<b v-if="selected.isTest" class="injection-tag">测试注入</b></dd></div>
+            <div><dt>采样记录</dt><dd>{{ selected.sensorDataId || '未关联' }}</dd></div>
+            <div><dt>首次触发</dt><dd>{{ selected.time }}</dd></div>
+            <div><dt>最后触发</dt><dd>{{ selected.time }}</dd></div>
+            <div><dt>触发次数</dt><dd>后端未统计</dd></div>
+          </dl>
 
-        <section class="card timeline-card">
-          <h2 class="section-title">自动响应</h2>
-          <div class="timeline" v-if="selected">
-            <div>
-              <time>{{ selected.time.slice(11) }}</time>
-              <span class="red"></span>
-              <strong>报警触发 · {{ selected.param }}{{ directionOf(selected.raw) === 'low' ? '偏低' : '偏高' }}</strong>
-            </div>
-            <div>
-              <time>—</time>
-              <span></span>
-              <strong>执行动作 · {{ selected.action }}</strong>
-            </div>
+          <h3>决策追溯</h3>
+          <div class="trace-flow">
+            <article><span>输入数据</span><strong>{{ selected.param }} {{ selected.value }}</strong><small>来自{{ selected.source.label }}</small></article>
+            <article><span>阈值规则</span><strong>{{ selected.threshold }}</strong><small>thresholds 表</small></article>
+            <article><span>动作指令</span><strong>{{ selected.action }}</strong><small>后端 action 字段</small></article>
+            <article><span>当前状态</span><strong>待接入</strong><small>缺少处理状态字段</small></article>
           </div>
-          <p v-else class="empty-cell">—</p>
-        </section>
 
-        <section class="card advice-card">
-          <h2 class="section-title">处理建议</h2>
-          <ul>
-            <li v-for="(tip, i) in advice" :key="i">{{ tip }}</li>
-          </ul>
-        </section>
+          <h3>处理记录</h3>
+          <div class="records">
+            <article><i></i><div><strong>告警写入</strong><span>{{ selected.time }} · FastAPI</span></div></article>
+            <article><i class="pending"></i><div><strong>人工确认</strong><span>后端暂未提供确认接口</span></div></article>
+          </div>
+          <div class="detail-actions">
+            <button class="btn btn-primary" type="button">确认告警</button>
+            <button class="btn btn-soft" type="button">标记已恢复</button>
+          </div>
+        </template>
+        <p v-else class="empty-cell">选择左侧记录查看详情</p>
       </aside>
     </div>
   </div>
@@ -251,309 +384,458 @@ onMounted(() => {
 
 <style scoped>
 .alarm-page {
-  max-width: 1320px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 
-.topbar,
-.summary-card div,
+.page-head,
 .filter-card,
-.date-field,
+.filter-range,
+.range-tabs,
+.kpi-row,
 .detail-head,
-.detail-title,
-.timeline div {
+.chart-row {
   display: flex;
   align-items: center;
 }
 
-.topbar {
+.page-head {
   justify-content: space-between;
-  margin-bottom: 18px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
-
-.summary-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.summary-card {
-  height: 92px;
-  padding: 16px;
-}
-
-.summary-card span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.summary-card div {
-  gap: 14px;
-  margin-top: 10px;
-}
-
-.summary-card strong {
-  font-size: 30px;
-  line-height: 1;
-}
-
-.summary-card strong.param-strong {
-  font-size: 20px;
-}
-
-.summary-card small {
-  color: var(--text-secondary);
-}
-
-.summary-card .red { color: var(--red); }
-.summary-card .orange { color: var(--orange); }
-.summary-card .blue { color: #1683c7; }
-.summary-card .green { color: var(--green); }
 
 .filter-card {
-  gap: 18px;
-  min-height: 96px;
-  padding: 18px;
+  gap: 16px;
+  padding: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
 }
 
-.filter-group {
+.filter-card label,
+.filter-range label {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
 }
 
-.filter-group label {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.filter-group.wide {
+.filter-range {
+  gap: 12px;
   flex: 1;
 }
 
+.filter-range.compact {
+  flex: 0 1 auto;
+}
+
 .range-tabs {
-  display: flex;
-  gap: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
 }
 
 .range-tabs button {
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.range-tabs button.active {
-  background: var(--green);
-  border-color: var(--green);
-  color: #fff;
-}
-
-.range-text {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
-
-.select-real {
   height: 36px;
-  min-width: 130px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  min-width: 96px;
+  border: 0;
+  border-right: 1px solid var(--border-light);
   background: #fff;
-  color: var(--text-primary);
-  font-size: 13px;
+  color: #334155;
+  font-weight: 650;
 }
 
-.query-btn {
-  margin-left: auto;
-  align-self: end;
-  width: 64px;
+.range-tabs button:last-child {
+  border-right: 0;
 }
 
-.alarm-grid {
+.range-tabs .active {
+  background: #e9f8ee;
+  color: #0a9b45;
+  font-weight: 800;
+}
+
+.filter-range span {
+  color: #64748b;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.filter-card select {
+  width: 120px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #fff;
+}
+
+.search-field {
+  width: 260px;
+  margin-top: 22px;
+}
+
+.kpi-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.kpi-card {
+  min-height: 108px;
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.kpi-card span {
+  color: #475569;
+  font-weight: 750;
+}
+
+.kpi-card strong {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 850;
+}
+
+.kpi-card p {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.kpi-card.red strong { color: #ef4444; }
+.kpi-card.orange strong { color: #f97316; }
+.kpi-card.green strong { color: #16a34a; }
+.kpi-card.blue strong { color: #2563eb; }
+.kpi-card.purple strong { color: #7c3aed; }
+
+.alarm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 520px;
   gap: 16px;
   align-items: start;
 }
 
-.left-stack {
+.alarm-main {
   display: grid;
   gap: 16px;
   min-width: 0;
 }
 
-.event-card {
+.table-panel,
+.dist-card,
+.trend-card,
+.alarm-side {
   padding: 18px;
-  min-width: 0;
 }
 
-.event-card h2 {
-  margin-bottom: 18px;
+.table-panel h2 {
+  margin-bottom: 14px;
 }
 
-.event-card .data-table td {
-  height: 51px;
-}
-
-.event-card tbody tr {
+.data-table tbody tr {
   cursor: pointer;
 }
 
-.event-card tr.hot td {
-  background: #fff8f7;
-  border-top: 1px solid #f2c7c4;
-  border-bottom: 1px solid #f2c7c4;
+.data-table tr.selected td {
+  background: #eff6ff;
+  border-top: 1px solid #bfdbfe;
+  border-bottom: 1px solid #bfdbfe;
+}
+
+.level-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #f97316;
+}
+
+.level-dot.high {
+  background: #ef4444;
+}
+
+.value-cell.red {
+  color: #ef4444;
+  font-weight: 850;
+}
+
+.injection-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  margin-left: 8px;
+  padding: 0 8px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 800;
+  vertical-align: middle;
 }
 
 .empty-cell {
   text-align: center;
-  color: var(--text-muted);
-  font-size: 13px;
+  color: #64748b;
   padding: 18px 0;
 }
 
-.right-stack {
+.chart-row {
+  align-items: stretch;
+  gap: 16px;
+}
+
+.dist-card {
+  width: 320px;
+}
+
+.dist-card h2,
+.trend-card h2 {
+  margin-bottom: 14px;
+}
+
+.donut {
+  width: 150px;
+  height: 150px;
   display: grid;
-  gap: 0;
-  align-content: start;
-  min-width: 0;
+  place-content: center;
+  margin: 12px auto;
+  border: 22px solid #22c55e;
+  border-left-color: #8b5cf6;
+  border-bottom-color: #86efac;
+  border-radius: 50%;
+  text-align: center;
 }
 
-.right-stack .card {
-  padding: 14px 18px;
-  border-radius: 0;
+.donut strong {
+  font-size: 30px;
 }
 
-.right-stack .card:first-child {
-  border-top-left-radius: var(--radius-card);
-  border-top-right-radius: var(--radius-card);
+.donut span {
+  color: #64748b;
+  font-size: 12px;
 }
 
-.right-stack .card:last-child {
-  border-bottom-left-radius: var(--radius-card);
-  border-bottom-right-radius: var(--radius-card);
+.dist-card ul {
+  display: grid;
+  gap: 9px;
+  list-style: none;
+}
+
+.dist-card li {
+  color: #334155;
+  font-weight: 650;
+}
+
+.dist-card i {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  margin-right: 8px;
+  border-radius: 50%;
+}
+
+.dist-card i.measured { background: #2563eb; }
+.dist-card i.model { background: #16a34a; }
+.dist-card i.control { background: #7c3aed; }
+.dist-card i.system { background: #94a3b8; }
+
+.trend-card {
+  flex: 1;
+}
+
+.bars {
+  height: 190px;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 16px 8px 4px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  overflow-x: auto;
+}
+
+.bars article {
+  min-width: 46px;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.bars span {
+  width: 16px;
+  border-radius: 999px 999px 0 0;
+  background: #16a34a;
+}
+
+.bars b {
+  color: #17223b;
+  font-size: 12px;
+}
+
+.bars small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.bar-empty {
+  align-self: center;
+  color: #64748b;
+}
+
+.alarm-side {
+  position: sticky;
+  top: 86px;
 }
 
 .detail-head {
   justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.detail-title {
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
-.detail-title strong {
-  font-size: 17px;
-}
-
-.detail-card dl {
+.alarm-side dl {
   display: grid;
   gap: 10px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-light);
 }
 
-.detail-card dl div {
+.alarm-side dl div {
   display: grid;
   grid-template-columns: 86px 1fr;
-  gap: 8px;
-}
-
-.detail-card dt,
-.detail-card dd {
-  font-size: 13px;
-}
-
-.detail-card dt {
-  color: var(--text-muted);
-}
-
-.detail-card dd {
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.timeline-card h2,
-.advice-card h2 {
-  margin-bottom: 10px;
-}
-
-.timeline {
-  display: grid;
-  gap: 9px;
-}
-
-.timeline div {
   gap: 10px;
-  color: var(--text-primary);
 }
 
-.timeline time {
-  width: 64px;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 12px;
+.alarm-side dt {
+  color: #64748b;
 }
 
-.timeline span {
-  width: 9px;
-  height: 9px;
+.alarm-side dd {
+  color: #17223b;
+  font-weight: 650;
+}
+
+.alarm-side h3 {
+  margin: 18px 0 12px;
+  color: #17223b;
+  font-size: 16px;
+}
+
+.trace-flow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.trace-flow article {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  padding: 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  background: #fff;
+}
+
+.trace-flow span {
+  color: #2563eb;
+  font-weight: 800;
+}
+
+.trace-flow strong {
+  color: #17223b;
+}
+
+.trace-flow small {
+  color: #64748b;
+}
+
+.records {
+  display: grid;
+  gap: 12px;
+}
+
+.records article {
+  display: flex;
+  gap: 10px;
+}
+
+.records i {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
   border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 0 1px #fff, 0 0 0 3px #dbeee2;
+  background: #f97316;
 }
 
-.timeline span.red {
-  background: var(--red);
-  box-shadow: 0 0 0 1px #fff, 0 0 0 3px #f3d3d0;
+.records i.pending {
+  background: #2563eb;
 }
 
-.timeline strong {
+.records div {
+  display: grid;
+  gap: 3px;
+}
+
+.records span {
+  color: #64748b;
   font-size: 13px;
 }
 
-.advice-card ul {
-  padding-left: 16px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-  font-size: 13px;
+.detail-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
 }
 
-@media (max-width: 1120px) {
-  .summary-row {
+@media (max-width: 1320px) {
+  .alarm-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .alarm-side {
+    position: static;
+  }
+}
+
+@media (max-width: 1100px) {
+  .kpi-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .alarm-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 860px) {
-  .topbar,
+  .chart-row,
   .filter-card {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .summary-row {
+  .dist-card {
+    width: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .page-head,
+  .filter-range,
+  .detail-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .kpi-row,
+  .trace-flow {
     grid-template-columns: 1fr;
   }
 
-  .query-btn {
-    align-self: stretch;
+  .search-field {
     width: 100%;
-  }
-
-  .detail-card dl div {
-    grid-template-columns: 78px 1fr;
+    margin-top: 0;
   }
 }
 </style>
