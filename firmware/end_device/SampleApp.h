@@ -47,6 +47,7 @@ extern "C" {
 
 /* 用户自定义事件 */
 #define SAMPLEAPP_SEND_PERIODIC_MSG_EVT       0x0001
+#define SAMPLEAPP_ALARM_STEP_EVT              0x0002
 
 /*********************************************************************
  * DHT11 引脚定义 (P2.0)
@@ -71,7 +72,7 @@ extern "C" {
 /* 三路板载 LED：接到 +3.3V 后由 GPIO 下拉点亮，低电平亮 */
 #define ACTUATOR_PUMP_LED_PIN     P1_0
 #define ACTUATOR_FERT_PIN         P1_1
-#define ACTUATOR_WINDOW_PIN       P1_6
+#define ACTUATOR_PEST_LIGHT_PIN   P1_6
 
 #define ACTUATOR_RELAY_ON()       (ACTUATOR_PUMP_PIN = 1)
 #define ACTUATOR_RELAY_OFF()      (ACTUATOR_PUMP_PIN = 0)

@@ -1,7 +1,7 @@
 /**
  * @file    SampleApp.c
  * @brief   智慧农业监测系统 - 终端节点主应用
- * @note    功能：DHT11温湿度采集、模拟光照/土壤湿度、ZigBee发送、接收控制命令、OLED显示
+ * @note    功能：DHT11温湿度采集、光照ADC采集、模拟土壤湿度、ZigBee发送、接收控制命令、OLED显示
  *          基于 Z-Stack 2.5.1a SampleApp 例程修改，CC2530 (8051内核)
  */
 
@@ -23,6 +23,15 @@
 #include "hal_lcd.h"
 #include "hal_led.h"
 #include "hal_key.h"
+#include "hal_adc.h"
+
+#ifndef HAL_ADC_CHANNEL_7
+#define HAL_ADC_CHANNEL_7      0x07
+#endif
+
+#ifndef HAL_ADC_RESOLUTION_12
+#define HAL_ADC_RESOLUTION_12  0x03
+#endif
 
 /* OLED 驱动头文件（可选：如果项目中没有该文件，在 IAR 预编译宏中不定义 HAL_OLED 即可跳过） */
 #ifdef HAL_OLED
@@ -74,13 +83,15 @@ static afAddrType_t SampleApp_DstAddr;
  *********************************************************************/
 static uint8  dht11_temp  = 25;   /* 温度（整数部分） */
 static uint8  dht11_humi  = 60;   /* 湿度（整数部分） */
-static uint16 light_value = 800;  /* 光照强度 (lux) */
+static uint16 light_value = 50;   /* 相对光照值 (0~100) */
 static uint8  soil_value  = 45;   /* 土壤湿度 (%) */
 
 /* 执行器状态：0=关, 1=开 */
 static uint8 pump_state   = 0;    /* 水泵继电器 P0.6 + 指示灯 P1.0 */
 static uint8 fert_state   = 0;    /* 施肥指示灯 P1.1 */
-static uint8 window_state = 0;    /* 天窗指示灯 P1.6 */
+static uint8 pest_light_state = 0; /* 灭虫灯指示灯 P1.6 */
+static uint8 alarm_state  = 0;    /* 异常报警流水灯状态 */
+static uint8 alarm_phase  = 0;    /* 报警流水灯相位 */
 
 /* 随机种子（用于模拟传感器波动） */
 static uint16 rand_seed = 12345;
@@ -96,9 +107,10 @@ static uint8 DHT11_ReadData(uint8 *temp, uint8 *humi);
 static uint8 DHT11_ReadByte(void);
 static void  DHT11_DelayUs(uint16 us);
 
-static void SampleApp_SimulateLight(void);
+static uint16 SampleApp_ReadLight(void);
 static void SampleApp_SimulateSoil(void);
 static uint16 SampleApp_SimpleRand(void);
+static void SampleApp_ApplyActuatorOutputs(void);
 
 #ifdef HAL_OLED
 static void SampleApp_UpdateOLED(void);
@@ -248,39 +260,97 @@ static uint8 DHT11_ReadData(uint8 *temp, uint8 *humi)
 }
 
 /*********************************************************************
- * @fn      SampleApp_SimulateLight
- * @brief   模拟光照传感器数据（基础值 + 随机波动）
- * @note    范围 500~1500 lux，每次波动 +/- 50
+ * @fn      SampleApp_ReadLight
+ * @brief   Read GL5516 light level from P0.7 ADC and map it to 0~100.
+ * @return  Relative light value, not lux.
  *********************************************************************/
-static void SampleApp_SimulateLight(void)
+static uint16 SampleApp_ReadLight(void)
 {
-    int16 delta;
+    uint8 i;
+    uint16 raw;
+    uint16 sum = 0;
 
-    /* 生成 -50 ~ +50 的波动 */
-    delta = (int16)(SampleApp_SimpleRand() % 101) - 50;
-    light_value = (uint16)((int16)light_value + delta);
+    /* P0.7/AIN7 as analog input for the onboard GL5516 divider. */
+    APCFG |= 0x80;
+    P0SEL |= 0x80;
+    P0DIR &= ~0x80;
 
-    /* 限幅 */
-    if (light_value < 500)  light_value = 500;
-    if (light_value > 1500) light_value = 1500;
+    for (i = 0; i < 4; i++)
+    {
+        raw = HalAdcRead(HAL_ADC_CHANNEL_7, HAL_ADC_RESOLUTION_12);
+        if (raw > 4095)
+        {
+            raw = 4095;
+        }
+        sum += raw;
+    }
+
+    return (uint16)((sum + 82) / 164);  /* round(sum / 4 * 100 / 4095) */
 }
 
 /*********************************************************************
  * @fn      SampleApp_SimulateSoil
  * @brief   模拟土壤湿度传感器数据（基础值 + 随机波动）
- * @note    范围 40~60%，每次波动 +/- 3
+ * @note    课程设计模拟：未浇水逐步变干，水泵开启后回升，范围 25~60%
  *********************************************************************/
 static void SampleApp_SimulateSoil(void)
 {
     int8 delta;
 
-    /* 生成 -3 ~ +3 的波动 */
-    delta = (int8)(SampleApp_SimpleRand() % 7) - 3;
+    if (pump_state)
+    {
+        /* 水泵开启后土壤湿度回升，便于触发后端 stop_at_or_above 关泵规则。 */
+        delta = (int8)(2 + (SampleApp_SimpleRand() % 3));
+    }
+    else
+    {
+        /* 未浇水时缓慢变干，便于触发后端 start_below 自动浇水规则。 */
+        delta = -(int8)(1 + (SampleApp_SimpleRand() % 3));
+    }
     soil_value = (uint8)((int8)soil_value + delta);
 
     /* 限幅 */
-    if (soil_value < 40) soil_value = 40;
+    if (soil_value < 25) soil_value = 25;
     if (soil_value > 60) soil_value = 60;
+}
+
+/*********************************************************************
+ * @fn      SampleApp_ApplyActuatorOutputs
+ * @brief   Drive real outputs from remembered states; alarm only uses P1.1/P1.6.
+ *********************************************************************/
+static void SampleApp_ApplyActuatorOutputs(void)
+{
+    if (pump_state)
+    {
+        ACTUATOR_RELAY_ON();
+        ACTUATOR_LED_ON(ACTUATOR_PUMP_LED_PIN);
+    }
+    else
+    {
+        ACTUATOR_RELAY_OFF();
+        ACTUATOR_LED_OFF(ACTUATOR_PUMP_LED_PIN);
+    }
+
+    if (alarm_state)
+    {
+        if (alarm_phase)
+        {
+            ACTUATOR_LED_OFF(ACTUATOR_FERT_PIN);
+            ACTUATOR_LED_ON(ACTUATOR_PEST_LIGHT_PIN);
+        }
+        else
+        {
+            ACTUATOR_LED_ON(ACTUATOR_FERT_PIN);
+            ACTUATOR_LED_OFF(ACTUATOR_PEST_LIGHT_PIN);
+        }
+        return;
+    }
+
+    if (fert_state)       { ACTUATOR_LED_ON(ACTUATOR_FERT_PIN); }
+    else                  { ACTUATOR_LED_OFF(ACTUATOR_FERT_PIN); }
+
+    if (pest_light_state) { ACTUATOR_LED_ON(ACTUATOR_PEST_LIGHT_PIN); }
+    else                  { ACTUATOR_LED_OFF(ACTUATOR_PEST_LIGHT_PIN); }
 }
 
 /*********************************************************************
@@ -288,6 +358,7 @@ static void SampleApp_SimulateSoil(void)
  * @brief   初始化 GPIO 引脚
  *          P0.6 → 通用输出（继电器控制）
  *          P1.0, P1.1, P1.6 → 通用输出（板载 LED，低电平亮）
+ *          P0.7 → GL5516 light sensor ADC input
  *          P2.0 → DHT11 数据线（初始设为输出）
  *********************************************************************/
 static void SampleApp_GPIO_Init(void)
@@ -301,10 +372,12 @@ static void SampleApp_GPIO_Init(void)
     P1DIR |= 0x43;    /* P1.0, P1.1, P1.6 设为输出 */
 
     /* 初始状态：全部关闭 */
-    ACTUATOR_RELAY_OFF();
-    ACTUATOR_LED_OFF(ACTUATOR_PUMP_LED_PIN);
-    ACTUATOR_LED_OFF(ACTUATOR_FERT_PIN);
-    ACTUATOR_LED_OFF(ACTUATOR_WINDOW_PIN);
+    SampleApp_ApplyActuatorOutputs();
+
+    /* P0.7/AIN7 analog input for GL5516 light sensor. */
+    APCFG |= 0x80;
+    P0SEL |= 0x80;
+    P0DIR &= ~0x80;
 
     /* P2.0 设置为通用 IO（DHT11 数据线） */
     P2SEL &= ~0x01;   /* P2.0 设为通用 IO */
@@ -318,15 +391,14 @@ static void SampleApp_GPIO_Init(void)
  * @brief   刷新 OLED 显示内容
  *          行1: "Smart Agri"
  *          行2: "T:xxC H:xx%"
- *          行3: "L:xxxx S:xx%"
- *          行4: 执行器状态 "P:ON F:OFF W:ON"
+ *          行3: "L:xxx"
  *********************************************************************/
 static void SampleApp_UpdateOLED(void)
 {
     uint8 str_buf[20];
 
     /* 行1：系统名称 */
-    HalOledShowStr(0, 0, "Smart Agri");
+    HalOledShowStr(0, 0, (uint8 *)"Smart Agri");
 
     /* 行2：温湿度 */
     /* 8051 IAR 环境下 sprintf 对 %d 支持有限，手动拼接更可靠 */
@@ -341,36 +413,13 @@ static void SampleApp_UpdateOLED(void)
     str_buf[11] = '\0';
     HalOledShowStr(0, 2, str_buf);
 
-    /* 行3：光照和土壤湿度 */
+    /* 行3：光照。OLED 只显示温度、空气湿度、光照；土壤值只上报给上位机。 */
     str_buf[0] = 'L'; str_buf[1] = ':';
-    str_buf[2] = (light_value / 1000) + '0';
-    str_buf[3] = ((light_value / 100) % 10) + '0';
-    str_buf[4] = ((light_value / 10) % 10) + '0';
-    str_buf[5] = (light_value % 10) + '0';
-    str_buf[6] = ' ';
-    str_buf[7] = 'S'; str_buf[8] = ':';
-    str_buf[9] = (soil_value / 10) + '0';
-    str_buf[10] = (soil_value % 10) + '0';
-    str_buf[11] = '%';
-    str_buf[12] = '\0';
+    str_buf[2] = (light_value / 100) + '0';
+    str_buf[3] = ((light_value / 10) % 10) + '0';
+    str_buf[4] = (light_value % 10) + '0';
+    str_buf[5] = '\0';
     HalOledShowStr(0, 4, str_buf);
-
-    /* 行4：执行器状态 P=水泵 F=施肥 W=天窗 */
-    str_buf[0] = 'P'; str_buf[1] = ':';
-    if (pump_state) { str_buf[2] = 'O'; str_buf[3] = 'N'; str_buf[4] = ' '; }
-    else            { str_buf[2] = 'O'; str_buf[3] = 'F'; str_buf[4] = 'F'; }
-
-    str_buf[5] = ' ';
-    str_buf[6] = 'F'; str_buf[7] = ':';
-    if (fert_state) { str_buf[8] = 'O'; str_buf[9] = 'N'; str_buf[10] = ' '; }
-    else            { str_buf[8] = 'O'; str_buf[9] = 'F'; str_buf[10] = 'F'; }
-
-    str_buf[11] = ' ';
-    str_buf[12] = 'W'; str_buf[13] = ':';
-    if (window_state) { str_buf[14] = 'O'; str_buf[15] = 'N'; str_buf[16] = '\0'; }
-    else              { str_buf[14] = 'O'; str_buf[15] = 'F'; str_buf[16] = 'F'; str_buf[17] = '\0'; }
-
-    HalOledShowStr(0, 6, str_buf);
 }
 #endif /* HAL_OLED */
 
@@ -474,6 +523,21 @@ uint16 SampleApp_ProcessEvent(uint8 task_id, uint16 events)
         return (events ^ SAMPLEAPP_SEND_PERIODIC_MSG_EVT);
     }
 
+    if (events & SAMPLEAPP_ALARM_STEP_EVT)
+    {
+        if (alarm_state)
+        {
+            alarm_phase ^= 1;
+            SampleApp_ApplyActuatorOutputs();
+
+            osal_start_timerEx(SampleApp_TaskID,
+                               SAMPLEAPP_ALARM_STEP_EVT,
+                               300);
+        }
+
+        return (events ^ SAMPLEAPP_ALARM_STEP_EVT);
+    }
+
     return 0;  /* 丢弃未知事件 */
 }
 
@@ -481,8 +545,8 @@ uint16 SampleApp_ProcessEvent(uint8 task_id, uint16 events)
  * @fn      SampleApp_SendPeriodicMessage
  * @brief   采集传感器数据并通过 ZigBee 发送到协调器
  *
- * 数据格式字符串: "t:25-h:60-l:800-s:45"
- *   t = 温度, h = 湿度, l = 光照, s = 土壤湿度
+ * 数据格式字符串: "t:25-h:60-l:50-s:45"
+ *   t = 温度, h = 湿度, l = 相对光照(0~100), s = 土壤湿度
  *********************************************************************/
 static void SampleApp_SendPeriodicMessage(void)
 {
@@ -501,12 +565,12 @@ static void SampleApp_SendPeriodicMessage(void)
         /* 读取失败则继续使用上次的值 */
     }
 
-    /* ---- 2. 模拟光照和土壤湿度 ---- */
-    SampleApp_SimulateLight();
+    /* ---- 2. 读取光照并模拟土壤湿度 ---- */
+    light_value = SampleApp_ReadLight();
     SampleApp_SimulateSoil();
 
     /* ---- 3. 组装数据字符串 ---- */
-    /* 格式: "t:25-h:60-l:800-s:45" */
+    /* 格式: "t:25-h:60-l:50-s:45" */
 
     /* t:xx */
     send_buf[len++] = 't';
@@ -526,11 +590,9 @@ static void SampleApp_SendPeriodicMessage(void)
 
     send_buf[len++] = '-';
 
-    /* l:xxxx */
+    /* l:0~100 */
     send_buf[len++] = 'l';
     send_buf[len++] = ':';
-    if (light_value >= 1000)
-        send_buf[len++] = (light_value / 1000) + '0';
     if (light_value >= 100)
         send_buf[len++] = ((light_value / 100) % 10) + '0';
     if (light_value >= 10)
@@ -573,7 +635,8 @@ static void SampleApp_SendPeriodicMessage(void)
  *   BLEGLED1 → P0.6继电器吸合 + P1.0指示灯亮
  *   BLEKLED1 → P0.6继电器断开 + P1.0指示灯灭
  *   BLEGLED2 → P1.1指示灯亮        BLEKLED2 → P1.1指示灯灭
- *   BLEGLED3 → P1.6指示灯亮        BLEKLED3 → P1.6指示灯灭
+ *   BLEGLED3 → P1.6灭虫灯亮        BLEKLED3 → P1.6灭虫灯灭
+ *   BLEALARM1 → P1.1/P1.6报警流水灯 BLEALARM0 → 停止报警并恢复状态
  *********************************************************************/
 static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
 {
@@ -599,42 +662,51 @@ static void SampleApp_MessageMSGCB(afIncomingMSGPacket_t *pckt)
     /* ---- 水泵继电器 (P0.6) + LED1 指示 (P1.0) ---- */
     if (strstr((char *)cmd_data, "BLEGLED1") != NULL)
     {
-        ACTUATOR_RELAY_ON();
-        ACTUATOR_LED_ON(ACTUATOR_PUMP_LED_PIN);
         pump_state = 1;
     }
     else if (strstr((char *)cmd_data, "BLEKLED1") != NULL)
     {
-        ACTUATOR_RELAY_OFF();
-        ACTUATOR_LED_OFF(ACTUATOR_PUMP_LED_PIN);
         pump_state = 0;
     }
 
     /* ---- LED2/施肥 (P1.1，低电平亮) ---- */
     if (strstr((char *)cmd_data, "BLEGLED2") != NULL)
     {
-        ACTUATOR_LED_ON(ACTUATOR_FERT_PIN);
         fert_state = 1;
     }
     else if (strstr((char *)cmd_data, "BLEKLED2") != NULL)
     {
-        ACTUATOR_LED_OFF(ACTUATOR_FERT_PIN);
         fert_state = 0;
     }
 
-    /* ---- LED3/天窗 (P1.6，低电平亮) ---- */
+    /* ---- LED3/灭虫灯 (P1.6，低电平亮) ---- */
     if (strstr((char *)cmd_data, "BLEGLED3") != NULL)
     {
-        ACTUATOR_LED_ON(ACTUATOR_WINDOW_PIN);
-        window_state = 1;
+        pest_light_state = 1;
     }
     else if (strstr((char *)cmd_data, "BLEKLED3") != NULL)
     {
-        ACTUATOR_LED_OFF(ACTUATOR_WINDOW_PIN);
-        window_state = 0;
+        pest_light_state = 0;
     }
 
-    /* 更新 OLED 显示执行器状态 */
+    /* ---- Alarm chaser on P1.1/P1.6 only; P0.6 pump relay is never touched here. ---- */
+    if (strstr((char *)cmd_data, "BLEALARM1") != NULL)
+    {
+        alarm_state = 1;
+        alarm_phase = 0;
+        osal_start_timerEx(SampleApp_TaskID,
+                           SAMPLEAPP_ALARM_STEP_EVT,
+                           300);
+    }
+    else if (strstr((char *)cmd_data, "BLEALARM0") != NULL)
+    {
+        alarm_state = 0;
+        alarm_phase = 0;
+    }
+
+    SampleApp_ApplyActuatorOutputs();
+
+    /* 更新 OLED 实时数据 */
 #ifdef HAL_OLED
     SampleApp_UpdateOLED();
 #endif

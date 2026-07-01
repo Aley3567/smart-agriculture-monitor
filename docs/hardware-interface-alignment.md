@@ -16,7 +16,7 @@
 | 实验 5/6 | LED 硬件接口知识(HAL_LED API / GPIO)、组播/点播概念 | 未直接复用代码，但 GPIO 映射一致 |
 | 实验 8 | 串口透传概念 | 未使用 SerialApp 的 ACK/重发机制，改为简单 UART 回调转发 |
 
-**接真机核心判断：项目固件已是可用的目标固件。bridge.py 解析器与固件输出格式完全匹配。需改动的地方集中在"光照/土壤"两个模拟传感器和一些边界细节。**
+**接真机核心判断：项目固件已是可用的目标固件。bridge.py 解析器与固件输出格式完全匹配。验收按 C/ED 双板架构：C 板接串口和 bridge；ED 板接 DHT11、GL5516/P0.7、OLED、继电器/LED。课程设计按单板模拟收口，施肥、灭虫、土壤、CO2、EC/TDS、肥力、红外不再要求额外真实负载或新增传感器。需改动/验证的地方集中在 OLED 编译启用、流水灯报警烧录验证和现场串口链路。**
 
 ---
 
@@ -24,13 +24,13 @@
 
 ### 2.1 数据格式
 
-**完整数据流：**
+**完整数据流（C/ED 双板链路）：**
 ```
-DHT11(P2.0) → 终端节点 SampleApp_SendPeriodicMessage()
+DHT11(P2.0) + GL5516(P0.7, P1 待接入) → ED SampleApp_SendPeriodicMessage()
   → 拼 "t:25-h:60-l:800-s:45"
-  → AF_DataRequest 点播到协调器(0x0000)
-  → 协调器 SampleApp_MessageMSGCB() 原样转发 + 追加 "\r\n"
-  → UART0 输出 "t:25-h:60-l:800-s:45\r\n"
+  → AF_DataRequest 点播到 C 板协调器(0x0000)
+  → C 板 SampleApp_MessageMSGCB() 原样转发 + 追加 "\r\n"
+  → C 板 UART0 输出 "t:25-h:60-l:800-s:45\r\n"
   → PC bridge.py parse_serial_line() 按 "-" 拆分, ":" 拆分
   → {"temp":25.0, "humi":60.0, "light":800.0, "soil":45.0}
   → WebSocket → FastAPI 入库
@@ -50,13 +50,14 @@ DHT11(P2.0) → 终端节点 SampleApp_SendPeriodicMessage()
 |------|--------|------|------|--------|
 | `t` 温度 | DHT11 | P2.0 单总线 | 实验 7 DHT11 驱动 | **真实硬件** |
 | `h` 湿度 | DHT11 | P2.0 单总线 | 同上 | **真实硬件** |
-| `l` 光照 | 无 | `SampleApp_SimulateLight()` | 固件内软件模拟 | **模拟值** |
+| `l` 光照 | GL5516 | P0.7 ADC | `SampleApp_ReadLight()` | **待现场 smoke 的相对光照值** |
 | `s` 土壤 | 无 | `SampleApp_SimulateSoil()` | 固件内软件模拟 | **模拟值** |
 
-**接真机时的选择：**
-- 方案 A（最小改动）：保持光照/土壤为固件模拟值，演示说明即可
-- 方案 B（加传感器）：接 BH1750 光照传感器(I2C) + 土壤湿度传感器(ADC)，修改固件采集逻辑
-- 方案 C（去掉 l/s）：固件只发 `t:25-h:60`，同时改 bridge.py 的 `len(data)==4` 为 `len(data)>=2`
+**接真机时的验收口径：**
+- 光照：固件已直接走板载 GL5516/P0.7 ADC，字段是相对光照值，不再宣称 lux；未完成遮光/照光 smoke 前保持待验收。
+- 土壤湿度：板上无传感器时仍为模拟值，不能作为真实低湿证据。
+- CO2/红外：按课程模拟/模型字段接入，不能标成硬件实测。
+- EC/TDS/肥力：按模型公式接入，保留 `source` 和 `formula_version`。
 
 ### 2.3 波特率
 
@@ -92,8 +93,8 @@ DHT11(P2.0) → 终端节点 SampleApp_SendPeriodicMessage()
 | `BLEKLED1` | pump off | P0_6=0, P1_0=1 | P1_0=0 | P0.6 + P1.0 | 继电器断开，LED1 指示灭 |
 | `BLEGLED2` | fertilizer on | P1_1=0 | P1_1=1 | P1.1 | LED2 指示亮 |
 | `BLEKLED2` | fertilizer off | P1_1=1 | P1_1=0 | P1.1 | LED2 指示灭 |
-| `BLEGLED3` | skylight on | P1_6=0 | P1_6=1 | P1.6 | LED3 指示亮 |
-| `BLEKLED3` | skylight off | P1_6=1 | P1_6=0 | P1.6 | LED3 指示灭 |
+| `BLEGLED3` | pest_light on | P1_6=0 | P1_6=1 | P1.6 | 灭虫灯指示亮 |
+| `BLEKLED3` | pest_light off | P1_6=1 | P1_6=0 | P1.6 | 灭虫灯指示灭 |
 
 **对接状态：命令字和上层语义一致；GPIO/电平已按创思通信集成板改为继电器高电平吸合、LED 低电平点亮。**
 
@@ -102,14 +103,27 @@ DHT11(P2.0) → 终端节点 SampleApp_SendPeriodicMessage()
 ```
 FastAPI control.py → {"type":"control","command":"BLEGLED1"}
   → WebSocket → bridge.py ws_to_serial()
-  → 串口写入 "BLEGLED1\r\n"
-  → 协调器 SampleApp_UartCB() 读取串口数据
-  → SampleApp_SendToEndDevice() 广播(0xFFFF) via SAMPLEAPP_CTRL_CLUSTERID
-  → 终端节点 SampleApp_MessageMSGCB() 收到
+  → C 板串口写入 "BLEGLED1\r\n"
+  → C 板 SampleApp_UartCB() 读取串口数据
+  → C 板 SampleApp_SendToEndDevice() 广播(0xFFFF) via SAMPLEAPP_CTRL_CLUSTERID
+  → ED SampleApp_MessageMSGCB() 收到
   → strstr 匹配 "BLEGLED1" → P0_6 = 1, P1_0 = 0
 ```
 
 **对接状态：链路完整。**
+
+自动浇水验收边界：
+
+- 后端规则触发必须能查到 `ControlLog`。
+- bridge 日志必须出现对应 `BLEGLED1/BLEKLED1` 命令。
+- ED 板必须有水泵/继电器动作证据。
+- 临时调阈值 smoke 只证明控制链路，不证明真实低湿传感器已完成。
+
+流水灯报警固件口径：
+
+- 后端判断异常后下发 `BLEALARM1/BLEALARM0`。
+- ED 已有本地流水灯表现代码。
+- 流水灯实现不能覆盖或误改 `pump` 继电器状态，不能把施肥/灭虫指示状态当作报警状态。
 
 ### 3.3 命令解析机制
 
@@ -153,7 +167,7 @@ FastAPI control.py → {"type":"control","command":"BLEGLED1"}
 | 继电器 SRA-05VDC-AL | P0.6 | 高电平吸合 | **水泵** |
 | LED D10 | P1.0 | 低电平亮 | **水泵指示** |
 | LED D2 | P1.1 | 低电平亮 | **施肥指示** |
-| LED D11 | P1.6 | 低电平亮 | **天窗指示** |
+| LED D11 | P1.6 | 低电平亮 | **灭虫灯指示** |
 
 **关键发现：P1.0/P1.1/P1.6 三路 LED 的物理连接是上拉到 3.3V 后由 GPIO 下拉点亮，所以固件必须用低电平表示 LED 开。** 继电器是 P0.6 经 S8050 三极管驱动，高电平吸合。
 
@@ -169,24 +183,25 @@ FastAPI control.py → {"type":"control","command":"BLEGLED1"}
 
 - [ ] **烧写项目固件**：使用 `firmware/coordinator/` 和 `firmware/end_device/` 的代码，不要用实验原版代码
 - [ ] **DHT11 接线**：数据线接 P2.0，加 4.7K 上拉电阻到 VCC
-- [ ] **串口接线**：协调器 UART0 (P0.2 RX / P0.3 TX) 接 USB 转串口模块，注意 TX/RX 交叉
+- [ ] **串口接线**：C 板 UART0 (P0.2 RX / P0.3 TX) 接 USB 转串口模块，注意 TX/RX 交叉
 - [ ] **GPIO 方向寄存器**：确认终端节点固件中 P0.6 已设为输出 (`P0DIR |= 0x40`)，P1.0/P1.1/P1.6 已设为输出 (`P1DIR |= 0x43`)
 - [ ] **先烧协调器再烧终端**：协调器先上电建网
 - [ ] **bridge.py 串口设备名**：macOS 上修改 `--port` 参数为实际 USB 串口设备名（如 `/dev/tty.usbserial-xxxx`）
 
 ### 建议做（提升可靠性）
 
-- [ ] **串口测试**：先用串口助手手动发 `BLEGLED1`，确认继电器吸合且 P1.0 指示灯亮
-- [ ] **数据验证**：串口助手查看协调器输出，确认格式为 `t:xx-h:xx-l:xxx-s:xx\r\n`
+- [ ] **串口测试**：先用串口助手手动发 `BLEGLED1/2/3` 和 `BLEKLED1/2/3`，确认三路响应；施肥/灭虫按课程模拟指示验收
+- [ ] **数据验证**：串口助手查看 C 板输出，确认格式为 `t:xx-h:xx-l:xxx-s:xx\r\n`
 - [ ] **P1.6 硬件确认**：确认开发板 P1.6 引脚是否有外接设备，还是需要飞线
 - [ ] **HAL_UART 宏**：协调器工程预编译宏必须包含 `HAL_UART=TRUE` 和 `HAL_UART_DMA=1`
-- [ ] **OLED 驱动**：终端节点需要 `HalOled.h` 驱动文件，如果没有可注释掉 OLED 相关代码
+- [ ] **OLED 驱动**：ED 节点需要 `HalOled.h` 驱动文件；P1 验收必须只显示温度、空气湿度、光照相对值
 
-### 可选做（演示加分）
+### 模拟/模型字段
 
-- [ ] **继电器接入**：P1.0/P1.1/P1.6 接继电器模块，驱动水泵/电磁阀/电机（GPIO 输出高电平即触发）
-- [ ] **真实光照传感器**：加 BH1750 (I2C)，替换 `SampleApp_SimulateLight()`
-- [ ] **真实土壤传感器**：加电容式土壤湿度传感器 (ADC)，替换 `SampleApp_SimulateSoil()`
+- [ ] **施肥/灭虫模拟执行器**：P1.1/P1.6 按课程设计作为模拟指示验收
+- [ ] **CO2/红外模型字段**：按 `simulated_backend` 或测试事件接入，不标硬件实测
+- [ ] **土壤湿度模拟值**：继续使用 `SampleApp_SimulateSoil()` 支撑课程演示和自动浇水触发
+- [ ] **EC/TDS/肥力**：按模型公式接入，保留 `source` 和 `formula_version`
 
 ---
 
