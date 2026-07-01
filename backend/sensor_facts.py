@@ -126,7 +126,7 @@ def compute_model_values(values: dict[str, Any]) -> dict[str, float]:
     humi = float(values.get("humi") or 0)
     light = float(values.get("light") or 0)
 
-    soil_raw = 50 + (humi - 50) * 0.35 - max(temp - 20, 0) * 1.8 - light * 0.12
+    soil_raw = 56 + (humi - 50) * 0.35 - max(temp - 20, 0) * 1.0 + (light - 50) * 0.7
     soil = _clamp(soil_raw + _jitter(temp, humi, light, 7.3) * 0.5, 15, 75)
 
     ec_raw = 0.65 + soil * 0.016 + max(temp - 25, 0) * 0.015 - max(humi - 70, 0) * 0.004

@@ -707,7 +707,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                     "board_id": "T1",
                     "temperature": 36.0,
                     "humidity": 75.0,
-                    "light": 30.0,
+                    "light": 50.0,
                 },
                 headers=self._auth_headers,
             )
@@ -794,7 +794,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                             "board_id": "T1",
                             "temperature": 28.0,
                             "humidity": 40.0,
-                            "light": 70.0,
+                            "light": 18.0,
                             "allow_control": True,
                         },
                         headers=self._auth_headers,
@@ -830,7 +830,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                             "board_id": "T1",
                             "temperature": 28.0,
                             "humidity": 40.0,
-                            "light": 70.0,
+                            "light": 18.0,
                             "allow_control": False,
                         },
                         headers=self._auth_headers,
@@ -858,7 +858,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                             "board_id": "T1",
                             "temperature": 28.0,
                             "humidity": 40.0,
-                            "light": 70.0,
+                            "light": 18.0,
                             "allow_control": True,
                         },
                         headers=self._auth_headers,
@@ -913,7 +913,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                             "board_id": "T1",
                             "temperature": 28.0,
                             "humidity": 40.0,
-                            "light": 70.0,
+                            "light": 18.0,
                             "allow_control": True,
                         },
                         headers=self._auth_headers,
@@ -925,7 +925,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                         "board_id": "T1",
                         "temperature": 22.0,
                         "humidity": 70.0,
-                        "light": 20.0,
+                        "light": 50.0,
                         "allow_control": True,
                     },
                     headers=self._auth_headers,
@@ -974,7 +974,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                             "board_id": "T1",
                             "temperature": 28.0,
                             "humidity": 40.0,
-                            "light": 70.0,
+                            "light": 18.0,
                             "allow_control": True,
                         },
                         headers=self._auth_headers,
@@ -1017,8 +1017,8 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                     },
                     headers=self._auth_headers,
                 )
-                low_sample = {"board_id": "T1", "temperature": 28.0, "humidity": 40.0, "light": 70.0, "allow_control": True}
-                recovered_sample = {"board_id": "T1", "temperature": 22.0, "humidity": 70.0, "light": 20.0, "allow_control": True}
+                low_sample = {"board_id": "T1", "temperature": 28.0, "humidity": 40.0, "light": 18.0, "allow_control": True}
+                recovered_sample = {"board_id": "T1", "temperature": 22.0, "humidity": 70.0, "light": 50.0, "allow_control": True}
                 for sample in [low_sample, low_sample, low_sample, recovered_sample, low_sample, low_sample, low_sample]:
                     response = await client.post("/api/test/sensor-sample", json=sample, headers=self._auth_headers)
                     self.assertEqual(response.status_code, 200)
@@ -1103,7 +1103,7 @@ class SensorFactsContractTest(unittest.IsolatedAsyncioTestCase):
                             "board_id": "B",
                             "temperature": 28.0,
                             "humidity": 40.0,
-                            "light": 70.0,
+                            "light": 18.0,
                             "allow_control": True,
                         },
                         headers=self._auth_headers,

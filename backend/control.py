@@ -160,6 +160,40 @@ async def check_and_control(
         allow_control=allow_control,
         is_test=is_test,
     )
+    fert_th = thresholds.get("soil_fertility")
+    fert_low = fert_th.min_value if fert_th else 60.0
+    await _apply_auto_device(
+        app_state=app_state, board_id=board_id, device="fertilizer",
+        should_on=model["soil_fertility"] < fert_low,
+        allow_control=allow_control, is_test=is_test, mode=mode,
+    )
+    await _apply_auto_device(
+        app_state=app_state, board_id=board_id, device="pest_light",
+        should_on=model["infrared"] > 0,
+        allow_control=allow_control, is_test=is_test, mode=mode,
+    )
+
+
+async def _apply_auto_device(
+    app_state, board_id: str, device: str, should_on: bool,
+    allow_control: bool, is_test: bool, mode: str,
+):
+    if not allow_control or mode != "auto" or is_test:
+        return
+    if _is_manual_suppressed(app_state, board_id, device):
+        return
+    canonical = normalize_device(device)
+    current = app_state.actuators.get(canonical, False) if app_state else False
+    if current == should_on:
+        return
+    action = "on" if should_on else "off"
+    hw_command = DEVICE_COMMAND_MAP[canonical][action]
+    await manager.send_to_bridge({"type": "control", "board_id": board_id, "command": hw_command})
+    if app_state:
+        app_state.actuators[canonical] = should_on
+        board_state = app_state.boards.get(board_id, {})
+        if "actuators" in board_state:
+            board_state["actuators"][canonical] = should_on
 
 
 async def _apply_alarm_light_state(
